@@ -1,0 +1,30 @@
+{
+  "name": "multi-agent",
+  "version": "1.0.0",
+  "description": "Multi-agent framework for autonomous MD config tuning",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/index.ts",
+    "test": "tsx --test src/**/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@mariozechner/pi-agent-core": "^0.61.1",
+    "@mariozechner/pi-ai": "^0.61.1",
+    "@mariozechner/pi-coding-agent": "^0.61.1",
+    "@mozilla/readability": "^0.6.0",
+    "@sinclair/typebox": "^0.34.48",
+    "linkedom": "^0.18.12",
+    "turndown": "^7.2.2"
+  },
+  "devDependencies": {
+    "@types/turndown": "^5.0.6",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
