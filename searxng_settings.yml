@@ -1,0 +1,17 @@
+# SearXNG settings file for pi-agent project
+# Minimal override — only what's needed for JSON API integration.
+# All other settings inherit from the image's built-in defaults.
+
+use_default_settings: true
+
+search:
+  formats:
+    - html
+    - json
+
+server:
+  port: 8080
+  bind_address: "0.0.0.0"
+  secret_key: "pi-agent-local-dev-b8e4c1d3f2a5"
+  image_proxy: true
+  method: "GET"
