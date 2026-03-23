@@ -21,6 +21,7 @@ export interface LoopIntegrationOptions {
   logsDir?: string;
   task?: string;
   onIterationReport?: (report: string) => void;
+  auditLogger?: AuditLogger;
 }
 
 interface LoopIntegrationDependencies {
@@ -92,6 +93,9 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
   let auditLoggerInitPromise: Promise<AuditLogger> | null = null;
 
   async function getAuditLogger(): Promise<AuditLogger | null> {
+    if (options.auditLogger) {
+      return options.auditLogger;
+    }
     if (!options.logsDir) {
       return null;
     }

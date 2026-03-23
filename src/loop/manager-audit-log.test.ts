@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, it } from "node:test";
 
 import type { IterationResult } from "./persistence-loop.js";
+import type { WorkUnitResult } from "./work-unit.js";
 import { formatAuditEntry, createAuditLogger } from "./manager-audit-log.js";
+import { createWorkUnit, createDecompositionPlan } from "./work-unit.js";
 
 function createIterationResult(overrides?: Partial<IterationResult>): IterationResult {
   return {
@@ -184,5 +186,88 @@ describe("createAuditLogger", () => {
 
     const files = await import("node:fs/promises").then((fs) => fs.readdir(dir));
     assert.equal(files.length, 1);
+  });
+});
+
+describe("audit log decomposition events", () => {
+  it("logs decomposition plan with all work units", async () => {
+    const dir = makeTempDir();
+    const logger = await createAuditLogger(dir, "Research MDM");
+
+    const units = [
+      createWorkUnit({ goal: "Survey vendors", scope: "Top 5" }),
+      createWorkUnit({ goal: "Compare features", scope: "Matrix" })
+    ];
+    const plan = createDecompositionPlan("Research MDM", units);
+    await logger.logDecomposition(plan);
+
+    const files = await import("node:fs/promises").then((fs) => fs.readdir(dir));
+    const content = await readFile(join(dir, files[0]!), "utf-8");
+    assert.equal(content.includes("## Task Decomposition"), true);
+    assert.equal(content.includes("Survey vendors"), true);
+    assert.equal(content.includes("Compare features"), true);
+    assert.equal(content.includes("2 WorkUnits"), true);
+  });
+
+  it("logs work unit start", async () => {
+    const dir = makeTempDir();
+    const logger = await createAuditLogger(dir, "Task");
+    const unit = createWorkUnit({ goal: "Test unit", scope: "scope" });
+    await logger.logWorkUnitStart(unit, 1, 3);
+
+    const files = await import("node:fs/promises").then((fs) => fs.readdir(dir));
+    const content = await readFile(join(dir, files[0]!), "utf-8");
+    assert.equal(content.includes("[1/3]"), true);
+    assert.equal(content.includes("Test unit"), true);
+  });
+
+  it("logs work unit completion with duration", async () => {
+    const dir = makeTempDir();
+    const logger = await createAuditLogger(dir, "Task");
+    const unit = createWorkUnit({ goal: "Done unit", scope: "scope" });
+    const result: WorkUnitResult = {
+      workUnit: unit,
+      findings: "Found things",
+      remainingWork: [],
+      durationMs: 45000
+    };
+    await logger.logWorkUnitComplete(result, 72);
+
+    const files = await import("node:fs/promises").then((fs) => fs.readdir(dir));
+    const content = await readFile(join(dir, files[0]!), "utf-8");
+    assert.equal(content.includes("Done unit"), true);
+    assert.equal(content.includes("45.0s"), true);
+    assert.equal(content.includes("72/100"), true);
+  });
+
+  it("logs resplit with parent and children", async () => {
+    const dir = makeTempDir();
+    const logger = await createAuditLogger(dir, "Task");
+    const parent = createWorkUnit({ goal: "Big task", scope: "all" });
+    const children = [
+      createWorkUnit({ goal: "Sub A", scope: "part A", depth: 1, parentId: parent.id }),
+      createWorkUnit({ goal: "Sub B", scope: "part B", depth: 1, parentId: parent.id })
+    ];
+    await logger.logResplit(parent, children, "timeout after 600s");
+
+    const files = await import("node:fs/promises").then((fs) => fs.readdir(dir));
+    const content = await readFile(join(dir, files[0]!), "utf-8");
+    assert.equal(content.includes("Resplit"), true);
+    assert.equal(content.includes("Big task"), true);
+    assert.equal(content.includes("timeout after 600s"), true);
+    assert.equal(content.includes("Sub A"), true);
+    assert.equal(content.includes("Sub B"), true);
+  });
+
+  it("logs synthesis completion", async () => {
+    const dir = makeTempDir();
+    const logger = await createAuditLogger(dir, "Task");
+    await logger.logSynthesis(3, 82, 12000);
+
+    const files = await import("node:fs/promises").then((fs) => fs.readdir(dir));
+    const content = await readFile(join(dir, files[0]!), "utf-8");
+    assert.equal(content.includes("Synthesis"), true);
+    assert.equal(content.includes("3"), true);
+    assert.equal(content.includes("82/100"), true);
   });
 });

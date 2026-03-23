@@ -6,3 +6,5 @@ export * from "./manager-audit-log.js";
 export * from "./persistence-loop.js";
 export * from "./rollback-manager.js";
 export * from "./stagnation-detector.js";
+export * from "./task-orchestrator.js";
+export * from "./work-unit.js";

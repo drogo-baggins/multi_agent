@@ -9,7 +9,8 @@ import { relayEvents } from "../communication/event-relay.js";
 import { searchWeb } from "../search/index.js";
 import { extractContent } from "../search/index.js";
 import { createLoopCallbacks, type UserInteraction } from "../loop/loop-integration.js";
-import { runPersistenceLoop } from "../loop/persistence-loop.js";
+import { createAuditLogger } from "../loop/manager-audit-log.js";
+import { runDecomposedLoop } from "../loop/task-orchestrator.js";
 
 const RouteParametersSchema = Type.Object({
   message: Type.String()
@@ -219,6 +220,10 @@ function createStartResearchLoopToolDefinition(
             notify: () => {}
           };
 
+      const auditLogger = logsDir
+        ? await createAuditLogger(logsDir, params.task)
+        : undefined;
+
       const iterationReports: string[] = [];
       const callbacks = createLoopCallbacks({
         registry,
@@ -226,32 +231,41 @@ function createStartResearchLoopToolDefinition(
         ui,
         logsDir,
         task: params.task,
+        auditLogger,
         onIterationReport: (report) => {
           iterationReports.push(report);
         }
       });
 
       try {
-        const results = await runPersistenceLoop(params.task, callbacks, {
-          maxIterations: params.maxIterations ?? 10
+        const managerAgent = await registry.get("manager");
+        const result = await runDecomposedLoop({
+          task: params.task,
+          managerAgent,
+          callbacks,
+          auditLogger,
+          notify: ui.notify,
+          maxIterationsPerUnit: params.maxIterations ?? 10,
+          iterationTimeoutMs: 600_000
         });
 
-        const lastResult = results[results.length - 1];
         const summary = [
-          `Loop completed: ${results.length} iteration(s)`,
-          `Final outcome: ${lastResult?.outcome ?? "unknown"}`,
-          `Final score: ${lastResult?.evaluation.qualityScore ?? 0}/100`,
+          `Research completed: ${result.workUnitResults.length} work unit(s)`,
+          result.wasSingleUnit
+            ? "(single unit — no decomposition)"
+            : `(decomposed into ${result.workUnitResults.length} units)`,
+          `Total duration: ${(result.totalDurationMs / 1000).toFixed(1)}s`,
           "",
           "Iteration reports:",
           ...iterationReports
         ].join("\n");
 
         return {
-          content: [{ type: "text", text: summary }],
+          content: [{ type: "text", text: result.synthesizedWorkProduct || summary }],
           details: {
-            iterationCount: results.length,
-            finalOutcome: lastResult?.outcome,
-            finalScore: lastResult?.evaluation.qualityScore
+            workUnitCount: result.workUnitResults.length,
+            wasSingleUnit: result.wasSingleUnit,
+            totalDurationMs: result.totalDurationMs
           }
         };
       } catch (error) {
