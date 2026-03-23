@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import type { IterationResult } from "./persistence-loop.js";
 import type { EvaluationIssue } from "./evaluation-report.js";
+import type { ImprovementRequest } from "./improvement-request.js";
 import type { DecompositionPlan, WorkUnit, WorkUnitResult } from "./work-unit.js";
 
 function formatTimestamp(date: Date): string {
@@ -16,11 +17,19 @@ function formatDuration(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+function filterDecision(cause: EvaluationIssue["cause"]): string {
+  if (cause === "config") {
+    return "→ Improvement request generated";
+  }
+  return `→ Skipped (cause: ${cause})`;
+}
+
 function formatIssue(issue: EvaluationIssue, index: number): string {
   return [
     `${index + 1}. **[${issue.category}]** ${issue.description}`,
     `   - Evidence: ${issue.evidence}`,
-    `   - Cause: ${issue.cause}`
+    `   - Cause: ${issue.cause}`,
+    `   - Filter Decision: ${filterDecision(issue.cause)}`
   ].join("\n");
 }
 
@@ -71,6 +80,7 @@ function buildFileHeader(task: string, startTime: Date): string {
 
 export interface AuditLogger {
   logIteration(result: IterationResult): Promise<void>;
+  logImprovementExecution(requests: ImprovementRequest[], managerResponses: string[]): Promise<void>;
   logDecomposition(plan: DecompositionPlan): Promise<void>;
   logWorkUnitStart(unit: WorkUnit, index: number, total: number): Promise<void>;
   logWorkUnitComplete(result: WorkUnitResult, qualityScore: number): Promise<void>;
@@ -98,6 +108,36 @@ export async function createAuditLogger(logsDir: string, task: string): Promise<
     async logIteration(result: IterationResult): Promise<void> {
       await ensureHeader();
       const entry = formatAuditEntry(result, new Date());
+      await appendFile(filePath, entry, "utf-8");
+    },
+
+    async logImprovementExecution(requests: ImprovementRequest[], managerResponses: string[]): Promise<void> {
+      await ensureHeader();
+      const requestRows = requests.map((req, i) =>
+        `${i + 1}. **[${req.issueCategory}]** ${req.improvementDirection}\n   - Evidence: ${req.issueEvidence}`
+      ).join("\n\n");
+
+      const responseSection = managerResponses.length > 0
+        ? managerResponses.map((resp, i) => `${i + 1}. ${resp}`).join("\n")
+        : "No responses received";
+
+      const entry = [
+        "## Improvement Execution",
+        "",
+        `**Time**: ${new Date().toISOString()}`,
+        `**Requests Sent**: ${requests.length}`,
+        "",
+        "### Requests",
+        "",
+        requestRows || "None",
+        "",
+        "### Manager Response (Config Changes Applied)",
+        "",
+        responseSection,
+        "",
+        "---",
+        ""
+      ].join("\n");
       await appendFile(filePath, entry, "utf-8");
     },
 

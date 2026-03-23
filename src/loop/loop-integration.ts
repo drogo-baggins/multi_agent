@@ -186,7 +186,11 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
       const response = await loopIntegrationDependencies.invokeAgent(managerAgent, prompt);
       const text = extractTextOrThrow(response);
       options.registry.evict("worker");
-      return parseImprovementResponse(text);
+      const responses = parseImprovementResponse(text);
+
+      void getAuditLogger().then((logger) => logger?.logImprovementExecution(requests, responses));
+
+      return responses;
     },
 
     readCurrentConfig: async (): Promise<string> => loopIntegrationDependencies.loadAgentConfig(options.workerConfigDir),

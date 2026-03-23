@@ -271,3 +271,127 @@ describe("audit log decomposition events", () => {
     assert.equal(content.includes("82/100"), true);
   });
 });
+
+describe("formatAuditEntry filter decisions", () => {
+  it("annotates config issues as improvement request generated", () => {
+    const result = createIterationResult({
+      evaluation: {
+        qualityScore: 60,
+        summary: "Needs work.",
+        issues: [
+          { category: "coverage", description: "Missing auth", evidence: "No auth section", cause: "config" }
+        ]
+      }
+    });
+    const entry = formatAuditEntry(result, new Date());
+
+    assert.equal(entry.includes("Filter Decision"), true);
+    assert.equal(entry.includes("→ Improvement request generated"), true);
+  });
+
+  it("annotates non-config issues as skipped with cause", () => {
+    const result = createIterationResult({
+      evaluation: {
+        qualityScore: 60,
+        summary: "Needs work.",
+        issues: [
+          { category: "accuracy", description: "Complex topic", evidence: "Wrong data", cause: "task-difficulty" },
+          { category: "structure", description: "LLM hallucination", evidence: "Made up facts", cause: "llm-limitation" }
+        ]
+      }
+    });
+    const entry = formatAuditEntry(result, new Date());
+
+    assert.equal(entry.includes("→ Skipped (cause: task-difficulty)"), true);
+    assert.equal(entry.includes("→ Skipped (cause: llm-limitation)"), true);
+  });
+
+  it("shows both generated and skipped decisions in mixed issues", () => {
+    const result = createIterationResult();
+    const entry = formatAuditEntry(result, new Date());
+
+    assert.equal(entry.includes("→ Improvement request generated"), true);
+    assert.equal(entry.includes("→ Skipped (cause: task-difficulty)"), true);
+  });
+});
+
+describe("audit log improvement execution", () => {
+  it("logs improvement requests sent and manager responses", async () => {
+    const dir = makeTempDir();
+    const logger = await createAuditLogger(dir, "Task");
+
+    const requests = [
+      {
+        issueCategory: "coverage" as const,
+        issueEvidence: "No auth section found",
+        workProductExcerpt: "The document covers...",
+        relatedConfigSection: "coverage: high",
+        improvementDirection: "Prioritize coverage improvements. Address auth.",
+        userFeedback: "Add authentication details"
+      }
+    ];
+    const responses = ["Updated worker config: added auth_coverage=required to coverage section"];
+
+    await logger.logImprovementExecution(requests, responses);
+
+    const files = await import("node:fs/promises").then((fs) => fs.readdir(dir));
+    const content = await readFile(join(dir, files[0]!), "utf-8");
+    assert.equal(content.includes("## Improvement Execution"), true);
+    assert.equal(content.includes("Requests Sent**: 1"), true);
+    assert.equal(content.includes("[coverage]"), true);
+    assert.equal(content.includes("No auth section found"), true);
+    assert.equal(content.includes("Manager Response"), true);
+    assert.equal(content.includes("Updated worker config"), true);
+  });
+
+  it("handles empty requests and responses", async () => {
+    const dir = makeTempDir();
+    const logger = await createAuditLogger(dir, "Task");
+
+    await logger.logImprovementExecution([], []);
+
+    const files = await import("node:fs/promises").then((fs) => fs.readdir(dir));
+    const content = await readFile(join(dir, files[0]!), "utf-8");
+    assert.equal(content.includes("## Improvement Execution"), true);
+    assert.equal(content.includes("Requests Sent**: 0"), true);
+    assert.equal(content.includes("No responses received"), true);
+  });
+
+  it("logs multiple requests with corresponding responses", async () => {
+    const dir = makeTempDir();
+    const logger = await createAuditLogger(dir, "Task");
+
+    const requests = [
+      {
+        issueCategory: "coverage" as const,
+        issueEvidence: "Missing auth",
+        workProductExcerpt: "...",
+        relatedConfigSection: "...",
+        improvementDirection: "Add auth section",
+        userFeedback: "Need auth"
+      },
+      {
+        issueCategory: "structure" as const,
+        issueEvidence: "Bad headings",
+        workProductExcerpt: "...",
+        relatedConfigSection: "...",
+        improvementDirection: "Fix heading hierarchy",
+        userFeedback: "Better structure"
+      }
+    ];
+    const responses = [
+      "Added auth_coverage config",
+      "Updated heading_depth parameter"
+    ];
+
+    await logger.logImprovementExecution(requests, responses);
+
+    const files = await import("node:fs/promises").then((fs) => fs.readdir(dir));
+    const content = await readFile(join(dir, files[0]!), "utf-8");
+    assert.equal(content.includes("Requests Sent**: 2"), true);
+    assert.equal(content.includes("[coverage]"), true);
+    assert.equal(content.includes("[structure]"), true);
+    assert.equal(content.includes("Added auth_coverage config"), true);
+    assert.equal(content.includes("Updated heading_depth parameter"), true);
+  });
+});
