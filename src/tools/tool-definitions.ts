@@ -31,7 +31,8 @@ const WebFetchParametersSchema = Type.Object({
 
 const StartResearchLoopParametersSchema = Type.Object({
   task: Type.String(),
-  maxIterations: Type.Optional(Type.Number())
+  maxIterations: Type.Optional(Type.Number()),
+  qualityThreshold: Type.Optional(Type.Number())
 });
 
 const MAX_CONTENT_CHARS = 30000;
@@ -199,7 +200,7 @@ function createStartResearchLoopToolDefinition(
   return {
     name: "start_research_loop",
     label: "Start Research Loop",
-    description: "Starts the persistence loop: Worker executes the task, Manager evaluates, user gives feedback, and the cycle repeats until the user approves or quits.",
+    description: "Starts the persistence loop: Worker executes the task, Manager evaluates, and the cycle repeats. When qualityThreshold is set (0-100), the loop runs autonomously — auto-approving when the score meets the threshold, and auto-improving otherwise. Without qualityThreshold, the user is prompted each iteration.",
     parameters: StartResearchLoopParametersSchema,
     async execute(
       _toolCallId: string,
@@ -231,6 +232,7 @@ function createStartResearchLoopToolDefinition(
         ui,
         logsDir,
         task: params.task,
+        qualityThreshold: params.qualityThreshold,
         auditLogger,
         onIterationReport: (report) => {
           iterationReports.push(report);

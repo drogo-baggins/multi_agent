@@ -20,6 +20,7 @@ export interface LoopIntegrationOptions {
   ui: UserInteraction;
   logsDir?: string;
   task?: string;
+  qualityThreshold?: number;
   onIterationReport?: (report: string) => void;
   auditLogger?: AuditLogger;
 }
@@ -155,6 +156,19 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
       const summary = `=== Iteration ${iteration} ===\nScore: ${evaluation.qualityScore}/100\nSummary: ${evaluation.summary}\nIssues: ${evaluation.issues.length}\n\n${report}`;
 
       ui.notify(summary);
+
+      if (options.qualityThreshold !== undefined) {
+        if (evaluation.qualityScore >= options.qualityThreshold) {
+          return { type: "approved" };
+        }
+        const issueDescriptions = evaluation.issues
+          .map((issue) => `[${issue.category}] ${issue.description}`)
+          .join("; ");
+        return {
+          type: "improve",
+          feedback: issueDescriptions || `Quality score ${evaluation.qualityScore} is below threshold ${options.qualityThreshold}. Improve overall quality.`
+        };
+      }
 
       const decision = await ui.select(
         "How would you like to proceed?",

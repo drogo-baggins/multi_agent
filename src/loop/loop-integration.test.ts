@@ -353,3 +353,121 @@ describe("createLoopCallbacks", () => {
     assert.equal(reports[0]?.includes("60ms"), true);
   });
 });
+
+describe("autonomous mode (qualityThreshold)", () => {
+  it("auto-approves when qualityScore meets threshold", async () => {
+    const worker = createMockAgent();
+    const manager = createMockAgent();
+    const { registry } = createRegistry(worker.agent, manager.agent);
+
+    const selectFn = mock.fn(async () => "should-not-be-called");
+    const ui = createMockUI({ select: selectFn });
+
+    const callbacks = createLoopCallbacks({
+      registry,
+      workerConfigDir: "/tmp/worker",
+      ui,
+      qualityThreshold: 70
+    });
+
+    const evaluation = { qualityScore: 85, summary: "Good.", issues: [] };
+    const feedback = await callbacks.getUserFeedback("work", evaluation, 1);
+
+    assert.deepEqual(feedback, { type: "approved" });
+    assert.equal(selectFn.mock.calls.length, 0);
+  });
+
+  it("auto-improves with issue descriptions when score is below threshold", async () => {
+    const worker = createMockAgent();
+    const manager = createMockAgent();
+    const { registry } = createRegistry(worker.agent, manager.agent);
+
+    const selectFn = mock.fn(async () => "should-not-be-called");
+    const ui = createMockUI({ select: selectFn });
+
+    const callbacks = createLoopCallbacks({
+      registry,
+      workerConfigDir: "/tmp/worker",
+      ui,
+      qualityThreshold: 80
+    });
+
+    const evaluation = {
+      qualityScore: 55,
+      summary: "Needs work.",
+      issues: [
+        { category: "coverage" as const, description: "Missing auth section", evidence: "none", cause: "config" as const },
+        { category: "accuracy" as const, description: "Outdated data", evidence: "v1 ref", cause: "task-difficulty" as const }
+      ]
+    };
+    const feedback = await callbacks.getUserFeedback("work", evaluation, 1);
+
+    assert.equal(feedback.type, "improve");
+    if (feedback.type === "improve") {
+      assert.equal(feedback.feedback.includes("Missing auth section"), true);
+      assert.equal(feedback.feedback.includes("Outdated data"), true);
+    }
+    assert.equal(selectFn.mock.calls.length, 0);
+  });
+
+  it("auto-improves with generic message when below threshold and no issues", async () => {
+    const worker = createMockAgent();
+    const manager = createMockAgent();
+    const { registry } = createRegistry(worker.agent, manager.agent);
+
+    const callbacks = createLoopCallbacks({
+      registry,
+      workerConfigDir: "/tmp/worker",
+      ui: createMockUI(),
+      qualityThreshold: 90
+    });
+
+    const evaluation = { qualityScore: 50, summary: "Below bar.", issues: [] };
+    const feedback = await callbacks.getUserFeedback("work", evaluation, 2);
+
+    assert.equal(feedback.type, "improve");
+    if (feedback.type === "improve") {
+      assert.equal(feedback.feedback.includes("50"), true);
+      assert.equal(feedback.feedback.includes("90"), true);
+    }
+  });
+
+  it("auto-approves at exact threshold boundary", async () => {
+    const worker = createMockAgent();
+    const manager = createMockAgent();
+    const { registry } = createRegistry(worker.agent, manager.agent);
+
+    const callbacks = createLoopCallbacks({
+      registry,
+      workerConfigDir: "/tmp/worker",
+      ui: createMockUI(),
+      qualityThreshold: 75
+    });
+
+    const evaluation = { qualityScore: 75, summary: "Meets threshold.", issues: [] };
+    const feedback = await callbacks.getUserFeedback("work", evaluation, 1);
+
+    assert.deepEqual(feedback, { type: "approved" });
+  });
+
+  it("falls back to UI interaction when qualityThreshold is not set", async () => {
+    const worker = createMockAgent();
+    const manager = createMockAgent();
+    const { registry } = createRegistry(worker.agent, manager.agent);
+
+    const selectFn = mock.fn(async () => "approve");
+    const ui = createMockUI({ select: selectFn });
+
+    const callbacks = createLoopCallbacks({
+      registry,
+      workerConfigDir: "/tmp/worker",
+      ui
+    });
+
+    const evaluation = { qualityScore: 95, summary: "Excellent.", issues: [] };
+    const feedback = await callbacks.getUserFeedback("work", evaluation, 1);
+
+    assert.deepEqual(feedback, { type: "approved" });
+    assert.equal(selectFn.mock.calls.length, 1);
+  });
+});
