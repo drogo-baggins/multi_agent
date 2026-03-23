@@ -23,6 +23,7 @@ const workerConfigDir = join(projectRoot, "agents", "worker");
 const managerConfigDir = join(projectRoot, "agents", "manager");
 const proxySystemPromptPath = join(projectRoot, "agents", "proxy", "system.md");
 const sandboxDir = join(projectRoot, "workspace");
+const logsDir = join(projectRoot, "workspace", "logs");
 
 async function main(): Promise<void> {
   loadEnvFile();
@@ -56,7 +57,7 @@ async function main(): Promise<void> {
     });
   });
 
-  const customTools = createCustomToolDefinitions({ registry, workerConfigDir });
+  const customTools = createCustomToolDefinitions({ registry, workerConfigDir, logsDir });
 
   const resourceLoader = new DefaultResourceLoader({
     cwd: projectRoot,

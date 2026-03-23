@@ -192,7 +192,8 @@ function createWebFetchToolDefinition(): ToolDefinition<typeof WebFetchParameter
 
 function createStartResearchLoopToolDefinition(
   registry: AgentRegistry,
-  workerConfigDir: string
+  workerConfigDir: string,
+  logsDir?: string
 ): ToolDefinition<typeof StartResearchLoopParametersSchema> {
   return {
     name: "start_research_loop",
@@ -223,6 +224,8 @@ function createStartResearchLoopToolDefinition(
         registry,
         workerConfigDir,
         ui,
+        logsDir,
+        task: params.task,
         onIterationReport: (report) => {
           iterationReports.push(report);
         }
@@ -265,6 +268,7 @@ function createStartResearchLoopToolDefinition(
 export interface CustomToolsOptions {
   registry: AgentRegistry;
   workerConfigDir: string;
+  logsDir?: string;
 }
 
 export function createCustomToolDefinitions(options: CustomToolsOptions): ToolDefinition<any>[] {
@@ -286,6 +290,6 @@ export function createCustomToolDefinitions(options: CustomToolsOptions): ToolDe
     createAskUserToolDefinition(),
     createWebSearchToolDefinition(),
     createWebFetchToolDefinition(),
-    createStartResearchLoopToolDefinition(options.registry, options.workerConfigDir)
+    createStartResearchLoopToolDefinition(options.registry, options.workerConfigDir, options.logsDir)
   ];
 }

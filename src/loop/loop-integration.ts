@@ -5,6 +5,7 @@ import { invokeAgent } from "../communication/invoke-agent.js";
 import { loadAgentConfig } from "../config/config-loader.js";
 import { formatEvaluationReport, parseEvaluationReport } from "./evaluation-report.js";
 import { formatImprovementRequest, type ImprovementRequest } from "./improvement-request.js";
+import { createAuditLogger, type AuditLogger } from "./manager-audit-log.js";
 import type { IterationResult, LoopCallbacks, UserFeedback, WorkerContext } from "./persistence-loop.js";
 
 export interface UserInteraction {
@@ -17,6 +18,8 @@ export interface LoopIntegrationOptions {
   registry: AgentRegistry;
   workerConfigDir: string;
   ui: UserInteraction;
+  logsDir?: string;
+  task?: string;
   onIterationReport?: (report: string) => void;
 }
 
@@ -84,6 +87,23 @@ function parseImprovementResponse(text: string): string[] {
 
 export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallbacks {
   const { ui } = options;
+
+  let auditLogger: AuditLogger | null = null;
+  let auditLoggerInitPromise: Promise<AuditLogger> | null = null;
+
+  async function getAuditLogger(): Promise<AuditLogger | null> {
+    if (!options.logsDir) {
+      return null;
+    }
+    if (auditLogger) {
+      return auditLogger;
+    }
+    if (!auditLoggerInitPromise) {
+      auditLoggerInitPromise = createAuditLogger(options.logsDir, options.task ?? "unknown");
+    }
+    auditLogger = await auditLoggerInitPromise;
+    return auditLogger;
+  }
 
   return {
     executeWorker: async (task: string, context: WorkerContext): Promise<string> => {
@@ -169,6 +189,7 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
 
     onIterationComplete: (result: IterationResult): void => {
       options.onIterationReport?.(formatIterationReport(result));
+      void getAuditLogger().then((logger) => logger?.logIteration(result));
     }
   };
 }
