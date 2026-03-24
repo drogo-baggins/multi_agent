@@ -360,10 +360,14 @@ type UserFeedback =
 
 抽象コールバックの具体実装を生成するファクトリ。Worker/Manager Agentの呼び出し、ユーザー対話、設定読み込みを結線する。
 
+`executeWorker` はエージェントのテキスト応答を成果物として返す。テキストが空の場合（Workerが `write_file` ツールのみで終了した場合など）、`workerSandboxDir` が指定されていれば `output/report.md` をフォールバックとして読み込む。
+
 ```typescript
 interface LoopIntegrationOptions {
   registry: AgentRegistry;
   workerConfigDir: string;
+  workerSandboxDir?: string;        // Worker の output/report.md を読むサンドボックスディレクトリ
+  ui: UserInteraction;
   onIterationReport?: (report: string) => void;
 }
 ```

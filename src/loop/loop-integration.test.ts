@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir, writeFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { afterEach, describe, it, mock } from "node:test";
 
 import type { Agent, AgentToolResult } from "@mariozechner/pi-agent-core";
@@ -84,6 +87,77 @@ afterEach(() => {
 });
 
 describe("createLoopCallbacks", () => {
+  it("executeWorker falls back to output/report.md when agent text response is empty", async () => {
+    const worker = createMockAgent();
+    const manager = createMockAgent();
+    const { registry } = createRegistry(worker.agent, manager.agent);
+
+    const sandboxDir = join(tmpdir(), `pi-agent-test-${Date.now()}`);
+    const outputDir = join(sandboxDir, "output");
+    await mkdir(outputDir, { recursive: true });
+    await writeFile(join(outputDir, "report.md"), "## Report from file\nFile content here.", "utf8");
+
+    mock.method(loopIntegrationDependencies, "invokeAgent", async () => createInvokeResult(""));
+
+    const callbacks = createLoopCallbacks({
+      registry,
+      workerConfigDir: "/tmp/worker",
+      workerSandboxDir: sandboxDir,
+      ui: createMockUI()
+    });
+
+    const result = await callbacks.executeWorker("task", { iteration: 1 });
+
+    assert.equal(result, "## Report from file\nFile content here.");
+
+    await rm(sandboxDir, { recursive: true, force: true });
+  });
+
+  it("executeWorker prefers agent text response over output/report.md when both exist", async () => {
+    const worker = createMockAgent();
+    const manager = createMockAgent();
+    const { registry } = createRegistry(worker.agent, manager.agent);
+
+    const sandboxDir = join(tmpdir(), `pi-agent-test-${Date.now()}`);
+    const outputDir = join(sandboxDir, "output");
+    await mkdir(outputDir, { recursive: true });
+    await writeFile(join(outputDir, "report.md"), "File content", "utf8");
+
+    mock.method(loopIntegrationDependencies, "invokeAgent", async () => createInvokeResult("Agent text response"));
+
+    const callbacks = createLoopCallbacks({
+      registry,
+      workerConfigDir: "/tmp/worker",
+      workerSandboxDir: sandboxDir,
+      ui: createMockUI()
+    });
+
+    const result = await callbacks.executeWorker("task", { iteration: 1 });
+
+    assert.equal(result, "Agent text response");
+
+    await rm(sandboxDir, { recursive: true, force: true });
+  });
+
+  it("executeWorker returns empty string when agent response is empty and no output file exists", async () => {
+    const worker = createMockAgent();
+    const manager = createMockAgent();
+    const { registry } = createRegistry(worker.agent, manager.agent);
+
+    mock.method(loopIntegrationDependencies, "invokeAgent", async () => createInvokeResult(""));
+
+    const callbacks = createLoopCallbacks({
+      registry,
+      workerConfigDir: "/tmp/worker",
+      workerSandboxDir: join(tmpdir(), "pi-agent-nonexistent-sandbox"),
+      ui: createMockUI()
+    });
+
+    const result = await callbacks.executeWorker("task", { iteration: 1 });
+
+    assert.equal(result, "");
+  });
+
   it("executeWorker calls invokeAgent with worker agent and extracts text", async () => {
     const worker = createMockAgent();
     const manager = createMockAgent();

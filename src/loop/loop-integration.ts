@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 
 import type { AgentRegistry } from "../communication/agent-registry.js";
@@ -16,6 +18,7 @@ export interface UserInteraction {
 export interface LoopIntegrationOptions {
   registry: AgentRegistry;
   workerConfigDir: string;
+  workerSandboxDir?: string;
   ui: UserInteraction;
   onIterationReport?: (report: string) => void;
 }
@@ -23,11 +26,22 @@ export interface LoopIntegrationOptions {
 interface LoopIntegrationDependencies {
   invokeAgent: typeof invokeAgent;
   loadAgentConfig: typeof loadAgentConfig;
+  readReportFile: (sandboxDir: string) => Promise<string>;
+}
+
+async function readReportFile(sandboxDir: string): Promise<string> {
+  try {
+    const content = await readFile(join(sandboxDir, "output", "report.md"), "utf8");
+    return content.trim();
+  } catch {
+    return "";
+  }
 }
 
 export const loopIntegrationDependencies: LoopIntegrationDependencies = {
   invokeAgent,
-  loadAgentConfig
+  loadAgentConfig,
+  readReportFile
 };
 
 const evaluationPromptHeader = [
@@ -116,7 +130,12 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
       }
 
       const response = await loopIntegrationDependencies.invokeAgent(workerAgent, prompt);
-      return extractTextOrThrow(response);
+      const agentText = extractTextOrThrow(response);
+      if (agentText) return agentText;
+      if (options.workerSandboxDir) {
+        return loopIntegrationDependencies.readReportFile(options.workerSandboxDir);
+      }
+      return "";
     },
 
     evaluateProduct: async (workProduct: string) => {
