@@ -39,6 +39,7 @@ async function main(): Promise<void> {
   };
 
   registry.register("worker", async () => {
+    if (!session.model) throw new Error("No model selected. Use /model to select a model.");
     return createWorkerAgent({
       configDir: workerConfigDir,
       sandboxDir,
@@ -48,6 +49,7 @@ async function main(): Promise<void> {
   });
 
   registry.register("manager", async () => {
+    if (!session.model) throw new Error("No model selected. Use /model to select a model.");
     return createManagerAgent({
       configDir: managerConfigDir,
       workerConfigDir,

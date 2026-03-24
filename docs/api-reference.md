@@ -269,6 +269,25 @@ type UserFeedback =
   | { type: "interrupt" };
 ```
 
+### `LoopStatusReporter`
+
+`loop-integration.ts`
+
+ループの各フェーズ移行を受け取るコールバックインターフェース。`LoopIntegrationOptions.statusReporter` に渡すことでフェーズ別に通知を受け取れる。
+
+`start_research_loop` ツールはTUI実行時（`ctx.hasUI === true`）に自動で `ctx.ui.setStatus("loop", ...)` / `ctx.ui.setWorkingMessage()` を呼ぶ実装をバンドルしている。
+
+```typescript
+export interface LoopStatusReporter {
+  onWorkerStart(iteration: number, maxIterations: number): void;
+  onEvaluationStart(iteration: number, maxIterations: number): void;
+  onFeedbackWaiting(iteration: number, maxIterations: number, score: number): void;
+  onImprovementStart(iteration: number, maxIterations: number): void;
+  onLoopComplete(totalIterations: number, finalScore: number): void;
+  onLoopInterrupted(iteration: number): void;
+}
+```
+
 ### `createLoopCallbacks(options: LoopIntegrationOptions): LoopCallbacks`
 
 `loop-integration.ts`
@@ -279,7 +298,14 @@ type UserFeedback =
 interface LoopIntegrationOptions {
   registry: AgentRegistry;
   workerConfigDir: string;
+  ui: UserInteraction;
+  logsDir?: string;
+  task?: string;
+  qualityThreshold?: number;
   onIterationReport?: (report: string) => void;
+  auditLogger?: AuditLogger;
+  maxIterations?: number;          // ステータス表示用の最大イテレーション数（デフォルト: 10）
+  statusReporter?: LoopStatusReporter; // フェーズ別ステータス更新コールバック
 }
 ```
 

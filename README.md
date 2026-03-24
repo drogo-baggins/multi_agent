@@ -233,7 +233,7 @@ Manager Agentが書き換えるのは `APPEND_SYSTEM.md` のみ。`agent.md` と
 ## テスト
 
 ```bash
-# ユニットテスト（85テスト）
+# ユニットテスト（152テスト）
 npm test
 
 # 型チェック
