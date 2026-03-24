@@ -6,7 +6,11 @@ import type { Static } from "@sinclair/typebox";
 import type { AgentRegistry } from "../communication/agent-registry.js";
 import { searchWeb } from "../search/index.js";
 import { extractContent } from "../search/index.js";
-import { createLoopCallbacks, type UserInteraction } from "../loop/loop-integration.js";
+import {
+  createLoopCallbacks,
+  type UserInteraction,
+  type LoopStatusReporter
+} from "../loop/loop-integration.js";
 import { createAuditLogger } from "../loop/manager-audit-log.js";
 import { runDecomposedLoop } from "../loop/task-orchestrator.js";
 
@@ -185,6 +189,44 @@ function createStartResearchLoopToolDefinition(
             notify: () => {}
           };
 
+      const STATUS_KEY = "loop";
+      const maxIterations = params.maxIterations ?? 10;
+
+      const statusReporter: LoopStatusReporter | undefined = ctx.hasUI
+        ? {
+            onWorkerStart(iteration, max) {
+              ctx.ui.setStatus(STATUS_KEY, `Iter ${iteration}/${max} — Worker running...`);
+              ctx.ui.setWorkingMessage(`Research loop Iter ${iteration}/${max}: Worker running`);
+            },
+            onEvaluationStart(iteration, max) {
+              ctx.ui.setStatus(STATUS_KEY, `Iter ${iteration}/${max} — Manager evaluating...`);
+              ctx.ui.setWorkingMessage(`Research loop Iter ${iteration}/${max}: Manager evaluating`);
+            },
+            onFeedbackWaiting(iteration, max, score) {
+              ctx.ui.setStatus(
+                STATUS_KEY,
+                `Iter ${iteration}/${max} — Score: ${score}/100 — Awaiting feedback`
+              );
+              ctx.ui.setWorkingMessage();
+            },
+            onImprovementStart(iteration, max) {
+              ctx.ui.setStatus(STATUS_KEY, `Iter ${iteration}/${max} — Manager improving...`);
+              ctx.ui.setWorkingMessage(`Research loop Iter ${iteration}/${max}: Manager improving`);
+            },
+            onLoopComplete(totalIterations, finalScore) {
+              ctx.ui.setStatus(
+                STATUS_KEY,
+                `Complete — ${totalIterations} iter, final score: ${finalScore}/100`
+              );
+              ctx.ui.setWorkingMessage();
+            },
+            onLoopInterrupted(iteration) {
+              ctx.ui.setStatus(STATUS_KEY, `Interrupted — at iter ${iteration}`);
+              ctx.ui.setWorkingMessage();
+            }
+          }
+        : undefined;
+
       const auditLogger = logsDir
         ? await createAuditLogger(logsDir, params.task)
         : undefined;
@@ -198,6 +240,8 @@ function createStartResearchLoopToolDefinition(
         task: params.task,
         qualityThreshold: params.qualityThreshold,
         auditLogger,
+        maxIterations,
+        statusReporter,
         onIterationReport: (report) => {
           iterationReports.push(report);
         }
@@ -211,7 +255,7 @@ function createStartResearchLoopToolDefinition(
           callbacks,
           auditLogger,
           notify: ui.notify,
-          maxIterationsPerUnit: params.maxIterations ?? 10,
+          maxIterationsPerUnit: maxIterations,
           iterationTimeoutMs: 600_000
         });
 
@@ -240,7 +284,12 @@ function createStartResearchLoopToolDefinition(
           content: [{ type: "text", text: `Research loop failed: ${message}` }],
           details: { error: message }
         };
-      }
+       } finally {
+         if (ctx.hasUI) {
+           ctx.ui.setStatus(STATUS_KEY, undefined);
+           ctx.ui.setWorkingMessage();
+         }
+       }
     }
   };
 }
