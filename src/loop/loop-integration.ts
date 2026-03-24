@@ -14,6 +14,15 @@ export interface UserInteraction {
   notify(message: string): void;
 }
 
+export interface LoopStatusReporter {
+  onWorkerStart(iteration: number, maxIterations: number): void;
+  onEvaluationStart(iteration: number, maxIterations: number): void;
+  onFeedbackWaiting(iteration: number, maxIterations: number, score: number): void;
+  onImprovementStart(iteration: number, maxIterations: number): void;
+  onLoopComplete(totalIterations: number, finalScore: number): void;
+  onLoopInterrupted(iteration: number): void;
+}
+
 export interface LoopIntegrationOptions {
   registry: AgentRegistry;
   workerConfigDir: string;
@@ -21,6 +30,8 @@ export interface LoopIntegrationOptions {
   logsDir?: string;
   task?: string;
   qualityThreshold?: number;
+  maxIterations?: number;
+  statusReporter?: LoopStatusReporter;
   onIterationReport?: (report: string) => void;
   auditLogger?: AuditLogger;
 }
@@ -89,6 +100,7 @@ function parseImprovementResponse(text: string): string[] {
 
 export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallbacks {
   const { ui } = options;
+  let currentIteration = 1;
 
   let auditLogger: AuditLogger | null = null;
   let auditLoggerInitPromise: Promise<AuditLogger> | null = null;
@@ -112,6 +124,7 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
 
   return {
     executeWorker: async (task: string, context: WorkerContext): Promise<string> => {
+      options.statusReporter?.onWorkerStart(context.iteration, options.maxIterations ?? 10);
       const workerAgent = await options.registry.get("worker");
       workerAgent.reset();
 
@@ -145,6 +158,7 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
     },
 
     evaluateProduct: async (workProduct: string) => {
+      options.statusReporter?.onEvaluationStart(currentIteration, options.maxIterations ?? 10);
       const managerAgent = await options.registry.get("manager");
       const prompt = `${evaluationPromptHeader}\n${workProduct}`;
       const response = await loopIntegrationDependencies.invokeAgent(managerAgent, prompt);
@@ -170,6 +184,8 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
         };
       }
 
+      options.statusReporter?.onFeedbackWaiting(iteration, options.maxIterations ?? 10, evaluation.qualityScore);
+
       const decision = await ui.select(
         "How would you like to proceed?",
         ["approve", "improve", "quit"]
@@ -188,6 +204,7 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
     },
 
     executeImprovement: async (requests: ImprovementRequest[]): Promise<string[]> => {
+      options.statusReporter?.onImprovementStart(currentIteration, options.maxIterations ?? 10);
       const managerAgent = await options.registry.get("manager");
       const requestBody = requests.map((request, index) => `### Request ${index + 1}\n${formatImprovementRequest(request)}`).join("\n\n");
       const prompt = [
@@ -211,6 +228,15 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
 
     onIterationComplete: (result: IterationResult): void => {
       options.onIterationReport?.(formatIterationReport(result));
+
+      if (result.outcome === "user-approved" || result.outcome === "max-iterations" || result.outcome === "timeout") {
+        options.statusReporter?.onLoopComplete(result.iteration, result.evaluation.qualityScore);
+      } else if (result.outcome === "user-interrupted") {
+        options.statusReporter?.onLoopInterrupted(result.iteration);
+      } else if (result.outcome === "improvement-applied") {
+        currentIteration = result.iteration + 1;
+      }
+
       void getAuditLogger().then((logger) => logger?.logIteration(result));
     }
   };
