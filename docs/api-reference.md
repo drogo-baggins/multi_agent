@@ -9,7 +9,106 @@ src/
   agents/       エージェントファクトリ
   tools/        エージェントツール定義
   loop/         永続実行ループ
+  search/       Web検索・コンテンツ取得
   index.ts      CLIエントリーポイント
+```
+
+---
+
+## search
+
+### `SearchConfig`
+
+`search-config.ts`
+
+```typescript
+interface SearchConfig {
+  searxngUrl: string;       // SearXNG エンドポイント
+  timeoutMs: number;        // リクエストタイムアウト (ms)
+  maxResults: number;       // 返す結果の最大数
+  userAgent: string;        // HTTP User-Agent ヘッダー
+  maxRetries: number;       // 429/502/503/504 時のリトライ回数
+  concurrencyLimit: number; // プロセス内同時リクエスト数の上限
+}
+```
+
+### `loadSearchConfig(): SearchConfig`
+
+環境変数から設定を読み込む。
+
+| 環境変数 | デフォルト | 説明 |
+|---|---|---|
+| `SEARXNG_URL` | `http://localhost:8888` | SearXNG エンドポイント |
+| `SEARXNG_TIMEOUT_MS` | `30000` | リクエストタイムアウト (ms) |
+| `SEARXNG_MAX_RESULTS` | `10` | 最大結果数 |
+| `SEARXNG_MAX_RETRIES` | `3` | 最大リトライ回数 |
+| `SEARXNG_CONCURRENCY_LIMIT` | `2` | 同時リクエスト数上限 |
+
+### `searchWeb(query, options?): Promise<SearchResponse>`
+
+`searxng-client.ts`
+
+SearXNG に検索クエリを投げ、正規化した結果を返す。
+
+```typescript
+interface SearchResponse {
+  results: SearchResult[];
+  query: string;
+}
+
+interface SearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+  publishedDate?: string;
+  engine?: string;
+}
+```
+
+**レート制限対策:**
+- `429 / 502 / 503 / 504` をリトライ対象ステータスとして扱う
+- `Retry-After` ヘッダーが存在する場合はその値（秒）を待機時間として優先する
+- ヘッダーがない場合は指数バックオフ（`200ms × 2^attempt + jitter`、最大10秒）を適用する
+- `concurrencyLimit` でプロセス内の同時リクエスト数を制限する（`Semaphore` による）
+
+**オプション:**
+```typescript
+{
+  limit?: number;       // 取得件数を上書き
+  config?: SearchConfig;
+  semaphore?: Semaphore; // テスト等で独立したセマフォを注入する場合
+}
+```
+
+### `class Semaphore`
+
+`searxng-client.ts`
+
+プロセス内の同時実行数を制限するセマフォ。`searchWeb` が内部で使用するが、テストや高度な制御のために公開されている。
+
+```typescript
+const sem = new Semaphore(2); // 同時実行数の上限
+await sem.acquire();
+try {
+  // 排他処理
+} finally {
+  sem.release();
+}
+```
+
+### `extractContent(url, options?): Promise<ExtractedContent>`
+
+`content-extractor.ts`
+
+指定URLのHTMLをフェッチし、Readability + Turndown でMarkdownに変換して返す。
+
+```typescript
+interface ExtractedContent {
+  url: string;
+  title: string;
+  content: string;
+  error?: string;
+}
 ```
 
 ---

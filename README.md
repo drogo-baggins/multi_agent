@@ -129,8 +129,10 @@ docker run -d -p 8888:8080 --name searxng searxng/searxng
 
 ```bash
 SEARXNG_URL=http://localhost:8888        # デフォルト
-SEARXNG_TIMEOUT_MS=30000                 # デフォルト
+SEARXNG_TIMEOUT_MS=30000                 # デフォルト（ミリ秒）
 SEARXNG_MAX_RESULTS=10                   # デフォルト
+SEARXNG_MAX_RETRIES=3                    # デフォルト: 429/502/503/504 時のリトライ回数
+SEARXNG_CONCURRENCY_LIMIT=2             # デフォルト: 同時リクエスト数の上限
 ```
 
 ### 環境変数の設定（.envファイル）
@@ -230,7 +232,7 @@ Manager Agentが書き換えるのは `APPEND_SYSTEM.md` のみ。`agent.md` と
 ## テスト
 
 ```bash
-# ユニットテスト（85テスト）
+# ユニットテスト（107テスト）
 npm test
 
 # 型チェック
