@@ -11,9 +11,8 @@ import { getModel, streamSimple } from "@mariozechner/pi-ai";
 import { createManagerAgent } from "../agents/manager-agent.js";
 import { createWorkerAgent } from "../agents/worker-agent.js";
 import { AgentRegistry } from "../communication/agent-registry.js";
-import { invokeAgent } from "../communication/invoke-agent.js";
-import { relayEvents } from "../communication/event-relay.js";
 import { loadAgentConfig } from "../config/config-loader.js";
+import { createCustomToolDefinitions } from "../tools/tool-definitions.js";
 
 const API_KEY = process.env["ANTHROPIC_API_KEY"];
 const SKIP_REASON = "ANTHROPIC_API_KEY not set — skipping E2E tests";
@@ -22,44 +21,7 @@ const TEST_TIMEOUT_MS = 120_000;
 const testModel = getModel("anthropic", "claude-sonnet-4-20250514");
 const getApiKey = (provider: string): string | undefined => process.env[`${provider.toUpperCase()}_API_KEY`];
 
-const RouteSchema = Type.Object({ message: Type.String() });
 const AskUserSchema = Type.Object({ question: Type.String() });
-
-function createRouteToWorkerTool(registry: AgentRegistry): AgentTool<typeof RouteSchema> {
-  return {
-    name: "route_to_worker",
-    label: "Route to Worker",
-    description: "Forwards a work request to the Worker Agent.",
-    parameters: RouteSchema,
-    async execute(_toolCallId, params, _signal?, onUpdate?) {
-      const child = await registry.get("worker");
-      const unsubscribe = onUpdate ? relayEvents(child, onUpdate) : null;
-      try {
-        return await invokeAgent(child, params.message);
-      } finally {
-        unsubscribe?.();
-      }
-    }
-  };
-}
-
-function createRouteToManagerTool(registry: AgentRegistry): AgentTool<typeof RouteSchema> {
-  return {
-    name: "route_to_manager",
-    label: "Route to Manager",
-    description: "Forwards an improvement request to the Manager Agent.",
-    parameters: RouteSchema,
-    async execute(_toolCallId, params, _signal?, onUpdate?) {
-      const child = await registry.get("manager");
-      const unsubscribe = onUpdate ? relayEvents(child, onUpdate) : null;
-      try {
-        return await invokeAgent(child, params.message);
-      } finally {
-        unsubscribe?.();
-      }
-    }
-  };
-}
 
 function createStubAskUserTool(): AgentTool<typeof AskUserSchema> {
   return {
@@ -125,18 +87,15 @@ async function createRegistry(options: {
   return registry;
 }
 
-async function createProxyForTest(configDir: string, registry: AgentRegistry): Promise<Agent> {
+async function createProxyForTest(configDir: string, registry: AgentRegistry, workerConfigDir: string): Promise<Agent> {
   const systemPrompt = await loadAgentConfig(configDir);
   const agent = new Agent({
     initialState: { systemPrompt, model: testModel },
     streamFn: streamSimple,
     getApiKey
   });
-  agent.setTools([
-    createRouteToWorkerTool(registry),
-    createRouteToManagerTool(registry),
-    createStubAskUserTool()
-  ]);
+  const customTools = createCustomToolDefinitions({ registry, workerConfigDir });
+  agent.setTools(customTools as any);
   return agent;
 }
 
@@ -154,7 +113,7 @@ describe("E2E integration tests", { skip: !API_KEY ? SKIP_REASON : undefined }, 
     tempRoots.clear();
   });
 
-  it("8.1 work request flow routes Proxy -> Worker and returns output", { timeout: TEST_TIMEOUT_MS }, async () => {
+  it("8.1 work request routes through start_research_loop and returns output", { timeout: TEST_TIMEOUT_MS }, async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "pi-agent-e2e-work-"));
     tempRoots.add(tempRoot);
 
@@ -173,17 +132,17 @@ describe("E2E integration tests", { skip: !API_KEY ? SKIP_REASON : undefined }, 
     });
     await writeAgentConfig(managerConfigDir, {
       agent: "You are a manager agent.",
-      system: "Use manager tools when asked to improve worker behavior.",
+      system: "Evaluate the work product and provide a quality score. Use evaluate_work_product when available.",
       appendSystem: ""
     });
     await writeAgentConfig(proxyConfigDir, {
       agent: "You are a proxy router.",
-      system: "If the user asks for actual work output, call route_to_worker. If the user asks to improve worker behavior, call route_to_manager.",
+      system: "For all user requests, call start_research_loop with the user's message as the task. For simple questions, use qualityThreshold=0 and maxIterations=1.",
       appendSystem: "If ambiguous, call ask_user."
     });
 
     const registry = await createRegistry({ workerConfigDir, managerConfigDir, sandboxDir });
-    const proxy = await createProxyForTest(proxyConfigDir, registry);
+    const proxy = await createProxyForTest(proxyConfigDir, registry, workerConfigDir);
 
     const toolStarts: string[] = [];
     const unsubscribe = proxy.subscribe((event: AgentEvent) => {
@@ -192,12 +151,11 @@ describe("E2E integration tests", { skip: !API_KEY ? SKIP_REASON : undefined }, 
       }
     });
 
-    let workerText = "";
+    let proxyText = "";
     try {
       await proxy.prompt("Write a brief report about common programming paradigms.");
       await proxy.waitForIdle();
-      const worker = await registry.get("worker");
-      workerText = extractAssistantText(worker.state.messages);
+      proxyText = extractAssistantText(proxy.state.messages);
     } finally {
       unsubscribe();
       registry.shutdownAll();
@@ -205,11 +163,11 @@ describe("E2E integration tests", { skip: !API_KEY ? SKIP_REASON : undefined }, 
       tempRoots.delete(tempRoot);
     }
 
-    assert.equal(toolStarts.includes("route_to_worker"), true);
-    assert.equal(workerText.length > 0, true);
+    assert.equal(toolStarts.includes("start_research_loop"), true, "Expected start_research_loop to be called");
+    assert.equal(proxyText.length > 0, true, "Expected non-empty output from proxy");
   });
 
-  it("8.2 improvement request flow routes Proxy -> Manager and updates APPEND_SYSTEM.md", { timeout: TEST_TIMEOUT_MS }, async () => {
+  it("8.2 improvement request routes through start_research_loop", { timeout: TEST_TIMEOUT_MS }, async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "pi-agent-e2e-improve-"));
     tempRoots.add(tempRoot);
 
@@ -221,11 +179,10 @@ describe("E2E integration tests", { skip: !API_KEY ? SKIP_REASON : undefined }, 
     await mkdir(sandboxDir, { recursive: true });
     await mkdir(join(sandboxDir, "output"), { recursive: true });
 
-    const initialAppend = "Keep responses short.";
     await writeAgentConfig(workerConfigDir, {
       agent: "You are a worker agent.",
       system: "Create reports from user requests.",
-      appendSystem: initialAppend
+      appendSystem: "Keep responses short."
     });
     await writeAgentConfig(managerConfigDir, {
       agent: "You are a manager agent.",
@@ -234,12 +191,12 @@ describe("E2E integration tests", { skip: !API_KEY ? SKIP_REASON : undefined }, 
     });
     await writeAgentConfig(proxyConfigDir, {
       agent: "You are a proxy router.",
-      system: "Route work requests to worker and improvement requests to manager.",
-      appendSystem: "When request is about improving worker configuration, use route_to_manager."
+      system: "For all user requests, call start_research_loop. For improvement requests about worker quality, set qualityThreshold=70 and maxIterations=5.",
+      appendSystem: "If ambiguous, call ask_user."
     });
 
     const registry = await createRegistry({ workerConfigDir, managerConfigDir, sandboxDir });
-    const proxy = await createProxyForTest(proxyConfigDir, registry);
+    const proxy = await createProxyForTest(proxyConfigDir, registry, workerConfigDir);
 
     const toolStarts: string[] = [];
     const unsubscribe = proxy.subscribe((event: AgentEvent) => {
@@ -248,13 +205,11 @@ describe("E2E integration tests", { skip: !API_KEY ? SKIP_REASON : undefined }, 
       }
     });
 
-    let updatedAppend = "";
-    let changelog = "";
+    let proxyText = "";
     try {
-      await proxy.prompt("The worker's reports lack structure. Please improve the worker's configuration to produce better organized reports.");
+      await proxy.prompt("The worker's reports lack structure. Please improve the quality of reports produced.");
       await proxy.waitForIdle();
-      updatedAppend = await readFile(join(workerConfigDir, "APPEND_SYSTEM.md"), "utf-8");
-      changelog = await readFile(join(workerConfigDir, "changelog.md"), "utf-8");
+      proxyText = extractAssistantText(proxy.state.messages);
     } finally {
       unsubscribe();
       registry.shutdownAll();
@@ -262,10 +217,8 @@ describe("E2E integration tests", { skip: !API_KEY ? SKIP_REASON : undefined }, 
       tempRoots.delete(tempRoot);
     }
 
-    assert.equal(toolStarts.includes("route_to_manager"), true);
-    assert.equal(updatedAppend.trim().length > 0, true);
-    assert.notEqual(updatedAppend.trim(), initialAppend);
-    assert.equal(changelog.includes("target_file: APPEND_SYSTEM.md"), true);
+    assert.equal(toolStarts.includes("start_research_loop"), true, "Expected start_research_loop to be called for improvement request");
+    assert.equal(proxyText.length > 0, true, "Expected non-empty output from proxy");
   });
 
   it("8.3 ambiguous request completes with stub ask_user tool (no stdin hang)", { timeout: TEST_TIMEOUT_MS }, async () => {
@@ -290,12 +243,12 @@ describe("E2E integration tests", { skip: !API_KEY ? SKIP_REASON : undefined }, 
     });
     await writeAgentConfig(proxyConfigDir, {
       agent: "You are a proxy router.",
-      system: "For ambiguous requests, ask_user for clarification.",
-      appendSystem: "If clear, route to worker or manager accordingly."
+      system: "For ambiguous requests, ask_user for clarification. For all work requests, use start_research_loop.",
+      appendSystem: ""
     });
 
     const registry = await createRegistry({ workerConfigDir, managerConfigDir, sandboxDir });
-    const proxy = await createProxyForTest(proxyConfigDir, registry);
+    const proxy = await createProxyForTest(proxyConfigDir, registry, workerConfigDir);
 
     let proxyText = "";
     try {

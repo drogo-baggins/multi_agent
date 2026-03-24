@@ -145,22 +145,36 @@ interface ProxyAgentOptions {
 }
 ```
 
-Proxy Agentを作成。ルーティングツール（`route_to_worker`, `route_to_manager`）+ `ask_user` ツールを装備。
+Proxy Agentを作成。統一実行ツール（`start_research_loop`）+ `ask_user` ツールを装備。
 
 ---
 
 ## tools
 
-### Proxy Tools (`proxy-tools.ts`)
+### Proxy Tools (`tool-definitions.ts`)
 
-#### `createRouteToWorkerTool(registry: AgentRegistry): AgentTool`
-Worker Agentにメッセージを転送するツール。パラメータ: `{ message: string }`
+#### `createCustomToolDefinitions(options: CustomToolsOptions): ToolDefinition[]`
+Proxy Agent用のカスタムツール一式を生成する。
 
-#### `createRouteToManagerTool(registry: AgentRegistry): AgentTool`
-Manager Agentにメッセージを転送するツール。パラメータ: `{ message: string }`
+```typescript
+interface CustomToolsOptions {
+  registry: AgentRegistry;
+  workerConfigDir: string;
+  logsDir?: string;
+}
+```
 
-#### `createAskUserTool(): AgentTool`
-readline経由でユーザーに質問するツール。パラメータ: `{ question: string }`
+生成されるツール:
+- `start_research_loop` — Worker→Manager評価ループの起動。すべてのタスクはこのツールを通して実行される
+- `ask_user` — ユーザーへの質問・確認
+- `web_search` — Web検索
+- `web_fetch` — Webページ取得
+
+#### `start_research_loop`
+永続実行ループを起動する。パラメータ: `{ task: string, maxIterations?: number, qualityThreshold?: number }`
+
+#### `ask_user`
+ユーザーに質問するツール。パラメータ: `{ question: string }`
 
 ### Manager Tools (`manager-tools.ts`)
 

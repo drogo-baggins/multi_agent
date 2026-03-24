@@ -4,17 +4,11 @@ import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
 
 import type { AgentRegistry } from "../communication/agent-registry.js";
-import { invokeAgent } from "../communication/invoke-agent.js";
-import { relayEvents } from "../communication/event-relay.js";
 import { searchWeb } from "../search/index.js";
 import { extractContent } from "../search/index.js";
 import { createLoopCallbacks, type UserInteraction } from "../loop/loop-integration.js";
 import { createAuditLogger } from "../loop/manager-audit-log.js";
 import { runDecomposedLoop } from "../loop/task-orchestrator.js";
-
-const RouteParametersSchema = Type.Object({
-  message: Type.String()
-});
 
 const AskUserParametersSchema = Type.Object({
   question: Type.String()
@@ -36,36 +30,6 @@ const StartResearchLoopParametersSchema = Type.Object({
 });
 
 const MAX_CONTENT_CHARS = 30000;
-
-function createRouteToolDefinition(
-  name: string,
-  label: string,
-  description: string,
-  target: string,
-  registry: AgentRegistry
-): ToolDefinition<typeof RouteParametersSchema> {
-  return {
-    name,
-    label,
-    description,
-    parameters: RouteParametersSchema,
-    async execute(
-      _toolCallId: string,
-      params: Static<typeof RouteParametersSchema>,
-      _signal: AbortSignal | undefined,
-      onUpdate: AgentToolUpdateCallback | undefined,
-      _ctx: ExtensionContext
-    ): Promise<AgentToolResult<unknown>> {
-      const childAgent = await registry.get(target);
-      const unsubscribe = onUpdate ? relayEvents(childAgent, onUpdate) : null;
-      try {
-        return await invokeAgent(childAgent, params.message);
-      } finally {
-        unsubscribe?.();
-      }
-    }
-  };
-}
 
 function createAskUserToolDefinition(): ToolDefinition<typeof AskUserParametersSchema> {
   return {
@@ -289,20 +253,6 @@ export interface CustomToolsOptions {
 
 export function createCustomToolDefinitions(options: CustomToolsOptions): ToolDefinition<any>[] {
   return [
-    createRouteToolDefinition(
-      "route_to_worker",
-      "Route to Worker",
-      "Forwards a work request to the Worker Agent.",
-      "worker",
-      options.registry
-    ),
-    createRouteToolDefinition(
-      "route_to_manager",
-      "Route to Manager",
-      "Forwards an improvement request to the Manager Agent.",
-      "manager",
-      options.registry
-    ),
     createAskUserToolDefinition(),
     createWebSearchToolDefinition(),
     createWebFetchToolDefinition(),
