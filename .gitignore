@@ -26,3 +26,6 @@ workspace/
 
 # Temporary files
 .tmp-*
+
+# Git worktrees
+.worktrees/
