@@ -311,6 +311,27 @@ describe("runPersistenceLoop", () => {
     assert.equal(results[0]?.outcome, "user-approved");
     assert.equal(results[0]?.workProduct, "fast-work");
   });
+
+  it("handles waitForInterrupt rejection after worker completes without unhandled rejection", async () => {
+    const callbacks: LoopCallbacks = {
+      executeWorker: async () => "fast-work",
+      evaluateProduct: async () => createReport(),
+      getUserFeedback: async () => ({ type: "approved" }),
+      executeImprovement: async () => [],
+      onIterationComplete: () => {},
+      readCurrentConfig: async () => "# config",
+      waitForInterrupt: async () => {
+        await sleep(0);
+        throw new Error("interrupt-source-closed");
+      }
+    };
+
+    const results = await runPersistenceLoop("task", callbacks, { iterationTimeoutMs: 1_000, maxIterations: 2 });
+
+    assert.equal(results.length, 1);
+    assert.equal(results[0]?.outcome, "user-approved");
+    assert.equal(results[0]?.workProduct, "fast-work");
+  });
 });
 
 describe("evaluation report formatting and parsing", () => {

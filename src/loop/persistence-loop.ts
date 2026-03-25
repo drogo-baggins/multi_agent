@@ -204,9 +204,11 @@ export async function runPersistenceLoop(
       const workerPromise = withTimeout(callbacks.executeWorker(task, workerContext), loopConfig.iterationTimeoutMs);
 
       if (callbacks.waitForInterrupt) {
+        const interruptPromise = callbacks.waitForInterrupt();
+        void interruptPromise.catch(() => undefined);
         const raced = await Promise.race([
           workerPromise.then((value) => ({ kind: "worker", value }) as const),
-          callbacks.waitForInterrupt().then((request) => ({ kind: "interrupt", request }) as const)
+          interruptPromise.then((request) => ({ kind: "interrupt", request }) as const)
         ]);
 
         if (raced.kind === "interrupt") {
