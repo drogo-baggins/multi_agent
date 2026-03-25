@@ -15,10 +15,32 @@ export function extractTextFromMessages(messages: AgentMessage[]): string {
     .join("\n");
 }
 
-export async function invokeAgent(agent: Agent, message: string): Promise<AgentToolResult<void>> {
+async function waitForIdleOrAbort(agent: Agent, signal: AbortSignal): Promise<void> {
+  await Promise.race([
+    agent.waitForIdle(),
+    new Promise<never>((_, reject) => {
+      const onAbort = () => {
+        reject(new DOMException("Aborted", "AbortError"));
+      };
+
+      signal.addEventListener("abort", onAbort, { once: true });
+    })
+  ]);
+}
+
+export async function invokeAgent(agent: Agent, message: string, signal?: AbortSignal): Promise<AgentToolResult<void>> {
+  if (signal?.aborted) {
+    throw new DOMException("Aborted", "AbortError");
+  }
+
   try {
     await agent.prompt(message);
-    await agent.waitForIdle();
+
+    if (signal) {
+      await waitForIdleOrAbort(agent, signal);
+    } else {
+      await agent.waitForIdle();
+    }
 
     const messages = agent.state.messages;
     const lastAssistant = [...messages].reverse().find(isAssistantMessage);
@@ -29,6 +51,10 @@ export async function invokeAgent(agent: Agent, message: string): Promise<AgentT
       details: undefined
     };
   } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw error;
+    }
+
     const errorMessage = error instanceof Error ? error.message : String(error);
     return {
       content: [{ type: "text", text: errorMessage }],
