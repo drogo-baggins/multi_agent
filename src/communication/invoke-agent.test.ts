@@ -131,4 +131,41 @@ describe("invokeAgent", () => {
     assert.equal(result.content[0]?.type, "text");
     assert.equal(result.content[0]?.text.includes("boom"), true);
   });
+
+  it("removes abort listener when waitForIdle resolves", async () => {
+    const { agent } = createMockAgent({
+      messages: [{ role: "assistant", content: [{ type: "text", text: "done" }] }]
+    });
+    const controller = new AbortController();
+
+    const removeSpy = mock.method(controller.signal, "removeEventListener");
+
+    const result = await invokeAgent(agent, "do task", controller.signal);
+
+    assert.equal(result.content[0]?.type, "text");
+    assert.equal(removeSpy.mock.calls.length, 1);
+    assert.equal(removeSpy.mock.calls[0]?.arguments[0], "abort");
+    assert.equal(typeof removeSpy.mock.calls[0]?.arguments[1], "function");
+  });
+
+  it("handles abort that happens between prompt completion and wait phase setup", async () => {
+    const controller = new AbortController();
+    const { agent } = createMockAgent({
+      prompt: async () => {
+        controller.abort();
+      },
+      waitForIdle: async () => {
+        await new Promise(() => {});
+      }
+    });
+
+    await assert.rejects(
+      () => invokeAgent(agent, "do task", controller.signal),
+      (error: unknown) => {
+        assert.ok(error instanceof DOMException);
+        assert.equal(error.name, "AbortError");
+        return true;
+      }
+    );
+  });
 });

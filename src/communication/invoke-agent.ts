@@ -16,16 +16,45 @@ export function extractTextFromMessages(messages: AgentMessage[]): string {
 }
 
 async function waitForIdleOrAbort(agent: Agent, signal: AbortSignal): Promise<void> {
-  await Promise.race([
-    agent.waitForIdle(),
-    new Promise<never>((_, reject) => {
-      const onAbort = () => {
-        reject(new DOMException("Aborted", "AbortError"));
-      };
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
 
-      signal.addEventListener("abort", onAbort, { once: true });
-    })
-  ]);
+    const settle = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      callback();
+    };
+
+    const onAbort = () => {
+      settle(() => {
+        reject(new DOMException("Aborted", "AbortError"));
+      });
+    };
+
+    signal.addEventListener("abort", onAbort);
+
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+
+    agent.waitForIdle().then(
+      () => {
+        settle(() => {
+          resolve();
+        });
+      },
+      (error) => {
+        settle(() => {
+          reject(error);
+        });
+      }
+    );
+  });
 }
 
 export async function invokeAgent(agent: Agent, message: string, signal?: AbortSignal): Promise<AgentToolResult<void>> {
