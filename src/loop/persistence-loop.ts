@@ -41,7 +41,12 @@ export interface LoopCallbacks {
   onIterationComplete: (result: IterationResult) => void;
   onIterationStateSaved?: (iteration: number, stateFile: string) => void;
   readCurrentConfig: () => Promise<string>;
+  waitForInterrupt?: () => Promise<InterruptRequest>;
 }
+
+export type InterruptRequest =
+  | { type: "stop" }
+  | { type: "modify"; feedback: string };
 
 export type UserFeedback =
   | { type: "approved" }
@@ -196,8 +201,50 @@ export async function runPersistenceLoop(
       };
 
       const workerStart = now();
-      workProduct = await withTimeout(callbacks.executeWorker(task, workerContext), loopConfig.iterationTimeoutMs);
-      workerExecutionMs = Math.max(0, now() - workerStart);
+      const workerPromise = withTimeout(callbacks.executeWorker(task, workerContext), loopConfig.iterationTimeoutMs);
+
+      if (callbacks.waitForInterrupt) {
+        const raced = await Promise.race([
+          workerPromise.then((value) => ({ kind: "worker", value }) as const),
+          callbacks.waitForInterrupt().then((request) => ({ kind: "interrupt", request }) as const)
+        ]);
+
+        if (raced.kind === "interrupt") {
+          void workerPromise.catch(() => undefined);
+          workerExecutionMs = Math.max(0, now() - workerStart);
+          const interruptedResult = createResult({
+            iteration,
+            startMs: iterationStart,
+            workProduct: "",
+            evaluation: emptyEvaluation(),
+            improvements: [],
+            workerExecutionMs,
+            evaluationMs,
+            managerImprovementMs,
+            outcome: "user-interrupted"
+          });
+          results.push(interruptedResult);
+          callbacks.onIterationComplete(interruptedResult);
+          await maybeSaveState();
+
+          if (raced.request.type === "stop") {
+            loopState.status = "interrupted";
+            await maybeSaveState();
+            return results;
+          }
+
+          lastFeedback = raced.request.feedback;
+          lastEvaluation = undefined;
+          loopState.lastFeedback = raced.request.feedback;
+          continue;
+        }
+
+        workProduct = raced.value;
+        workerExecutionMs = Math.max(0, now() - workerStart);
+      } else {
+        workProduct = await workerPromise;
+        workerExecutionMs = Math.max(0, now() - workerStart);
+      }
 
       const evaluationStart = now();
       evaluation = await withTimeout(callbacks.evaluateProduct(workProduct), loopConfig.iterationTimeoutMs);

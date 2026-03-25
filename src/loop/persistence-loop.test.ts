@@ -73,6 +73,11 @@ function createCallbacks(params: {
 }
 
 describe("runPersistenceLoop", () => {
+  const sleep = async (ms: number): Promise<void> =>
+    await new Promise((resolve) => {
+      setTimeout(resolve, ms);
+    });
+
   it("runs single iteration when user approves first result", async () => {
     let completedCount = 0;
     let improvementCalls = 0;
@@ -189,6 +194,122 @@ describe("runPersistenceLoop", () => {
     assert.equal(captured[0]?.outcome, "improvement-applied");
     assert.equal(captured[1]?.outcome, "user-approved");
     assert.deepEqual(captured[0]?.improvements, ["improvement-1"]);
+  });
+
+  it("stops when stop interrupt arrives during worker execution", async () => {
+    let evaluateCalls = 0;
+    let feedbackCalls = 0;
+
+    const callbacks: LoopCallbacks = {
+      executeWorker: async () => {
+        await sleep(25);
+        return "late-work";
+      },
+      evaluateProduct: async () => {
+        evaluateCalls += 1;
+        return createReport();
+      },
+      getUserFeedback: async () => {
+        feedbackCalls += 1;
+        return { type: "approved" };
+      },
+      executeImprovement: async () => ["unused"],
+      onIterationComplete: () => {},
+      readCurrentConfig: async () => "# config",
+      waitForInterrupt: async () => {
+        await sleep(5);
+        return { type: "stop" };
+      }
+    };
+
+    const results = await runPersistenceLoop("task", callbacks, { iterationTimeoutMs: 1_000, maxIterations: 3 });
+
+    assert.equal(results.length, 1);
+    assert.equal(results[0]?.outcome, "user-interrupted");
+    assert.equal(evaluateCalls, 0);
+    assert.equal(feedbackCalls, 0);
+  });
+
+  it("continues with feedback when modify interrupt arrives during worker execution", async () => {
+    const workerContexts: WorkerContext[] = [];
+    let interruptCallCount = 0;
+
+    const callbacks: LoopCallbacks = {
+      executeWorker: async (_task, context) => {
+        workerContexts.push(context);
+        if (context.iteration === 1) {
+          await sleep(25);
+          return "late-first-work";
+        }
+        return "second-work";
+      },
+      evaluateProduct: async () => createReport({ summary: "second evaluation" }),
+      getUserFeedback: async () => ({ type: "approved" }),
+      executeImprovement: async () => [],
+      onIterationComplete: () => {},
+      readCurrentConfig: async () => "# config",
+      waitForInterrupt: async () => {
+        interruptCallCount += 1;
+        if (interruptCallCount === 1) {
+          await sleep(5);
+          return { type: "modify", feedback: "Use bullet points" };
+        }
+        await sleep(25);
+        return { type: "stop" };
+      }
+    };
+
+    const results = await runPersistenceLoop("task", callbacks, { iterationTimeoutMs: 1_000, maxIterations: 3 });
+
+    assert.equal(results.length, 2);
+    assert.equal(results[0]?.outcome, "user-interrupted");
+    assert.equal(results[0]?.workProduct, "");
+    assert.deepEqual(results[0]?.improvements, []);
+    assert.equal(results[0]?.evaluation.qualityScore, 0);
+    assert.equal(results[1]?.outcome, "user-approved");
+    assert.equal(results[1]?.workProduct, "second-work");
+    assert.equal(workerContexts[1]?.previousFeedback, "Use bullet points");
+    assert.equal(workerContexts[1]?.previousEvaluation, undefined);
+  });
+
+  it("keeps behavior unchanged when waitForInterrupt is not provided", async () => {
+    const callbacks = createCallbacks({
+      feedbackSequence: [
+        { type: "improve", feedback: "iterate" },
+        { type: "approved" }
+      ]
+    });
+
+    const results = await runPersistenceLoop("task", callbacks, { maxIterations: 3 });
+
+    assert.equal(results.length, 2);
+    assert.equal(results[0]?.outcome, "improvement-applied");
+    assert.equal(results[1]?.outcome, "user-approved");
+  });
+
+  it("uses worker result when worker completes before interrupt fires", async () => {
+    let interruptCalls = 0;
+
+    const callbacks: LoopCallbacks = {
+      executeWorker: async () => "fast-work",
+      evaluateProduct: async () => createReport(),
+      getUserFeedback: async () => ({ type: "approved" }),
+      executeImprovement: async () => [],
+      onIterationComplete: () => {},
+      readCurrentConfig: async () => "# config",
+      waitForInterrupt: async () => {
+        interruptCalls += 1;
+        await sleep(25);
+        return { type: "stop" };
+      }
+    };
+
+    const results = await runPersistenceLoop("task", callbacks, { iterationTimeoutMs: 1_000, maxIterations: 2 });
+
+    assert.equal(interruptCalls, 1);
+    assert.equal(results.length, 1);
+    assert.equal(results[0]?.outcome, "user-approved");
+    assert.equal(results[0]?.workProduct, "fast-work");
   });
 });
 
