@@ -36,3 +36,6 @@ agents/worker/changelog.md
 agents/worker/backups/
 agents/manager/APPEND_SYSTEM.md
 **/loop-state.json
+
+# Archives (investigation project snapshots)
+archives/

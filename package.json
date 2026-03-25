@@ -9,7 +9,8 @@
     "start": "tsx src/index.ts",
     "test": "tsx --test src/**/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "new-project": "bash scripts/new-project.sh"
+    "new-project": "bash scripts/new-project.sh",
+    "archive": "tsx scripts/archive.ts"
   },
   "keywords": [],
   "author": "",
@@ -20,6 +21,7 @@
     "@mariozechner/pi-coding-agent": "^0.61.1",
     "@mozilla/readability": "^0.6.0",
     "@sinclair/typebox": "^0.34.48",
+    "exceljs": "^4.4.0",
     "linkedom": "^0.18.12",
     "turndown": "^7.2.2"
   },

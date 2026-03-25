@@ -1,40 +1,60 @@
-# pi-agent
+# pi-agent — Web調査エージェント
 
 > **⚠ 本プロジェクトはアルファ版です。** API・設定仕様・内部構造は予告なく変更される可能性があります。本番環境での使用は推奨しません。
 
-PI TypeScript toolkit上に構築されたマルチエージェントフレームワーク。Worker Agentの振る舞いを制御するMarkdown設定ファイルを、Manager Agentが自律的にチューニングすることで、ユーザーが満足するまで成果物の品質を継続的に改善する。
+Web上の情報を自律的に収集・整理し、Markdownレポートや表形式データ（Excel）として出力するAIエージェント。品質に満足できるまで自動で改善を繰り返す。
 
-## 概要
+## エージェントにできること
+
+| 依頼の種類 | 例 |
+|---|---|
+| **包括的な調査レポート** | 「生成AIの市場動向をまとめてください」 |
+| **製品・サービスの比較** | 「主要クラウドストレージサービスを比較してください」 |
+| **技術調査** | 「Rustの非同期ランタイムの違いを調査してください」 |
+| **単発の質問** | 「TypeScriptの最新バージョンは何ですか？」 |
+| **設定の改善依頼** | 「出典をもっと増やすよう調査方法を改善してください」 |
+
+### 成果物の形式
+
+- **`output/report.md`** — 構造化されたMarkdownレポート（出典URL付き）
+- **`output/*.xlsx`** — 列が多い比較表や一覧データはExcelファイルで出力
+- **`output/subtask-*.md`** — サブトピックごとの中間調査ファイル
+
+### 調査の特徴
+
+- **出典明示**: すべての事実的主張に出典URLを付与
+- **多角的な検索**: 同一テーマに複数クエリ・日英両方で検索
+- **継続的な品質改善**: 満足できなければ「改善」を指示するだけで再調査
+- **中断・再開**: 長時間調査は中断しても `output/progress.md` から再開可能
+
+## アーキテクチャ
+
+3つのコンポーネントが役割分担することで、長時間の調査も品質を保ちながら継続する。
 
 ```
-User → InteractiveMode Session → [全タスク]       → start_research_loop → Worker ⇄ Manager ループ
-                                                    （大規模調査: qualityThreshold=70, maxIterations=10）
-                                                    （単発質問: qualityThreshold=0, maxIterations=1）
-                                                    （改善依頼: qualityThreshold=70, maxIterations=5）
-                                → [曖昧なリクエスト] → ask_user → ユーザーに確認
+User
+ │
+ ▼
+Proxy ── リクエストを受け取り、調査ループを起動する
+ │
+ ▼
+┌─────────────────────────────────────────┐
+│  Persistence Loop                        │
+│                                          │
+│  Worker ──────────────────────────────→ │ 成果物生成
+│    ↑                                     │
+│    │ 設定改善                            │
+│  Manager ←── ユーザーフィードバック      │ 評価・改善
+└─────────────────────────────────────────┘
 ```
 
-### エージェント構成
+| コンポーネント | 役割 |
+|---|---|
+| **Proxy** | ユーザーリクエストの受付・分類・ループへのルーティング |
+| **Manager** | ループ全体の記憶保持役・ユーザーとの対話窓口。成果物の評価、フィードバックの受信、Worker設定の改善をイテレーションをまたいで一貫して担う |
+| **Worker** | 成果の生成に集中する実行専任エージェント。各イテレーションで独立して起動し、調査・レポート生成に専念する |
 
-PI toolkitの `InteractiveMode` がProxyセッションを管理し、カスタムツール経由でサブエージェントにルーティングする。
-
-| コンポーネント | 役割 | ツール |
-|---|---|---|
-| **Proxy**（メインセッション） | ユーザーリクエストの受付・分類・ループへのルーティング | `start_research_loop`, `ask_user`, `web_search`, `web_fetch` + PI標準ツール |
-| **Manager Agent** | ループ全体の記憶保持役・ユーザーとの対話窓口。成果物の評価、ユーザーフィードバックの受信、Worker設定の改善をイテレーションをまたいで一貫して担う。会話履歴はループを通じて累積され、過去の評価・フィードバック・変更履歴を踏まえた判断が可能 | `read_worker_config`, `read_work_product`, `update_worker_config`, `evaluate_work_product`, `read_changelog` |
-| **Worker Agent** | 成果の生成に集中する実行専任エージェント。各イテレーションで独立して起動し、タスク完了後に廃棄される（ステートレス設計）。最新のWorker設定と前回の評価結果のみを受け取り、調査・レポート生成に専念する | `web_search`, `web_fetch`, `bash`, `read_file`, `write_file` 等 |
-
-### 核心機能: 永続実行ループ（Persistence Loop）
-
-`start_research_loop` ツールが起動する自律的な品質改善サイクル。ユーザーの明示的な承認まで作業を放棄しない。
-
-```
-Worker実行 → Manager評価 → ユーザー確認 → [承認] → 完了
-                                        → [改善] → Manager設定改善 → Worker再実行 → ...
-                                        → [中断] → ループ終了
-```
-
-安全機構: max_iterations上限、停滞検出、連続劣化ロールバック、レイテンシ監視。
+**Manager は会話履歴をループ全体で保持する。** ユーザーのフィードバックと過去の評価が蓄積され、後続イテレーションで一貫した改善判断が可能になる。Worker は毎回リセットされ最新設定のみを受け取るため、各回の実行に集中できる。
 
 ## セットアップ
 
@@ -52,7 +72,7 @@ npm install
 
 ### LLMプロバイダー設定
 
-pi-agentはPI toolkitのプロバイダーシステムをそのまま使用する。サブスクリプション認証とAPIキー認証の両方に対応。
+pi-agentはPI toolkitのプロバイダーシステムを使用する。サブスクリプション認証とAPIキー認証の両方に対応。
 
 #### サブスクリプション認証（/login）
 
@@ -76,7 +96,6 @@ npm start
 #### APIキー認証（環境変数）
 
 ```bash
-# 例: Anthropic
 export ANTHROPIC_API_KEY=sk-ant-...
 npm start
 ```
@@ -157,22 +176,67 @@ npm start
 
 PI toolkitのインタラクティブセッションが起動する。初回起動時は `/login` でプロバイダー認証、`/model` でモデル選択を行う。
 
-### 調査タスクの例
+### 調査を依頼する
+
+自然な日本語でそのまま依頼できる:
 
 ```
-AIの歴史について包括的なレポートを作成してください
+生成AIの市場動向について包括的なレポートを作成してください
 ```
-→ メインセッションが `start_research_loop`（qualityThreshold=70）を使用 → Worker実行 → Manager評価 → 自律的改善ループ
+
+エージェントが自律的に調査を進め、品質基準を満たすまでループを継続する。各イテレーション後にスコアとサマリーが表示される。
 
 ```
-TypeScriptの最新バージョンって何？
+TypeScriptの最新バージョンは何ですか？
 ```
-→ `start_research_loop`（qualityThreshold=0, maxIterations=1）→ Worker が回答 → Manager評価 → 即完了
+
+単発の質問は1回の調査で即完了する。
 
 ```
-レポートの出典をもっと増やすよう設定を改善してください
+レポートの出典をもっと増やすよう調査方法を改善してください
 ```
-→ `start_research_loop`（qualityThreshold=70, maxIterations=5）→ Manager が Worker設定を改善
+
+調査方法そのものへのフィードバックも受け付ける。Managerが設定を改善したうえで再調査する。
+
+### 調査ループの操作
+
+各イテレーション完了後、3つの選択肢が表示される:
+
+| 選択 | 動作 |
+|---|---|
+| **approve** | 成果物を承認してループ終了 |
+| **improve** | フィードバックを入力 → Managerが設定を改善して再調査 |
+| **quit** | ループを中断 |
+
+`improve` を選んでフィードバックを入力すると、そのフィードバックはManagerに直接届き、次のイテレーションの方針に反映される。
+
+### プロジェクトのアーカイブとリセット
+
+調査が一段落したら、成果物をアーカイブしてから新しいプロジェクトを開始する。
+
+```bash
+# 現在の成果物をスナップショット保存
+npm run archive -- --name "生成AI市場調査"
+
+# アーカイブ後、プロジェクトをリセットして次の調査へ
+npm run new-project
+```
+
+アーカイブは `archives/{YYYY-MM-DD_HH-mm}_{name}/` に保存される:
+
+```
+archives/
+  2026-03-25_19-30_生成AI市場調査/
+    output/                  # 調査成果物（report.md, *.xlsx 等）
+    logs/                    # Manager監査ログ
+    agents/
+      worker/
+        APPEND_SYSTEM.md     # チューニング済みWorker設定
+        changelog.md         # Managerによる変更履歴
+    meta.json                # アーカイブ情報（タスク名・スコア・イテレーション数）
+```
+
+`archives/` は `.gitignore` 対象のため、調査成果物はバージョン管理から除外される。
 
 ### PI toolkit標準コマンド
 
@@ -186,51 +250,27 @@ TypeScriptの最新バージョンって何？
 | `ctrl+c` ×2 | 終了 |
 | `/` | コマンド一覧 |
 
-### 永続実行ループの動作
-
-`start_research_loop` が起動すると、各イテレーションで:
-
-1. **Worker Agent** がタスクを実行し成果物を生成（前回評価・フィードバックを受け取り実行に専念）
-2. **Manager Agent** が成果物を構造化評価（品質スコア + 課題分類）
-3. **ユーザーに判断を求める**:
-   - **approve**: 成果物を承認しループ終了
-   - **improve**: フィードバックを入力 → Manager に直接届き、Worker設定の改善に反映される
-   - **quit**: ループ中断
-
-**Manager の会話継続性**: Manager はループを通じて会話履歴を保持し続ける。ユーザーフィードバックと過去の評価が蓄積され、後続のイテレーションで一貫した改善判断が可能になる。一方 Worker は毎イテレーションでリセットされ、最新の設定と前回評価のみを受け取って実行に専念する。この分業によって、Manager は長期的な改善戦略を保ちながら、Worker は各回の成果品質を最大化できる。
-
-ループ終了後、停滞検出・ロールバック推奨・レイテンシ警告が必要に応じて適用される。
-
 ## 設定ファイル
 
-各エージェントの振る舞いはMarkdownファイルで制御する。
+Workerの調査方針はMarkdownファイルで制御する。Managerが自律的に `APPEND_SYSTEM.md` を書き換えることで、調査品質を反復改善する。
 
 ```
 agents/
   worker/
-    agent.md           # ペルソナ・基本方針
-    system.md          # タスク実行ルール・制約
-    APPEND_SYSTEM.md   # Manager Agentが動的に書き換える追加指示
+    agent.md           # ペルソナ・基本方針（人間が管理）
+    system.md          # タスク実行ルール・制約（人間が管理）
+    APPEND_SYSTEM.md   # Managerが動的に書き換える追加指示
     skills/            # スキル定義ファイル群
+      excel-output.md  # Excel出力スキル
     backups/           # APPEND_SYSTEM.md のバックアップ
-    changelog.md       # Manager Agentによる変更履歴
+    changelog.md       # Managerによる変更履歴
   proxy/
     agent.md, system.md, APPEND_SYSTEM.md, skills/
   manager/
     agent.md, system.md, APPEND_SYSTEM.md, skills/
 ```
 
-### 設定ファイルの組み立て順序
-
-systemPromptは以下の順序で結合される:
-1. `agent.md`
-2. `system.md`
-3. `skills/*.md`（アルファベット順）
-4. `APPEND_SYSTEM.md`
-
-### Manager Agentの改善範囲
-
-Manager Agentが書き換えるのは `APPEND_SYSTEM.md` のみ。`agent.md` と `system.md` は人間が管理する。変更前にバックアップが自動作成され、`changelog.md` に構造化された変更記録が追記される。
+Managerが書き換えるのは `APPEND_SYSTEM.md` のみ。`agent.md` と `system.md` は人間が管理する。変更前にバックアップが自動作成され、`changelog.md` に変更記録が追記される。
 
 ## テスト
 
@@ -267,6 +307,7 @@ npm run build
 - **LLM Framework**: PI TypeScript toolkit (`pi-ai`, `pi-agent-core`, `pi-coding-agent`)
 - **LLMプロバイダー**: PI toolkitがサポートする全プロバイダー（Anthropic, OpenAI, Azure, Google, GitHub Copilot, Mistral, Groq 等）
 - **Web検索**: SearXNG（Docker）
+- **Excel出力**: ExcelJS
 - **Schema**: TypeBox
 - **Test**: Node.js built-in test runner (`node:test`)
 
@@ -276,4 +317,4 @@ npm run build
 2. **汎用性**: 特定のタスクドメインやテストシナリオに結合したロジックを混入しない
 3. **検証可能性**: すべての改善は仮説→変更→検証の構造で記録される
 4. **安全性**: max_iterations、停滞検出、自動ロールバック、ユーザー確認による安全弁
-5. **分業**: Manager が記憶・判断・対話を一貫して担い、Worker が実行に集中することで、それぞれの品質を最大化する
+5. **分業**: Managerが記憶・判断・対話を一貫して担い、Workerが実行に集中することで、それぞれの品質を最大化する
