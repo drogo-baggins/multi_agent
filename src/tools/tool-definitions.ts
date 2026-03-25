@@ -192,11 +192,19 @@ function createStartResearchLoopToolDefinition(
 
       const STATUS_KEY = "loop";
       const maxIterations = params.maxIterations ?? 10;
+      let channelVersion = 0;
       let resolveInterrupt: ((req: InterruptRequest) => void) | undefined;
+      let isDialogOpen = false;
 
       function resetInterruptChannel(): Promise<InterruptRequest> {
+        channelVersion += 1;
+        const capturedVersion = channelVersion;
         return new Promise<InterruptRequest>((resolve) => {
-          resolveInterrupt = resolve;
+          resolveInterrupt = (req) => {
+            if (channelVersion === capturedVersion) {
+              resolve(req);
+            }
+          };
         });
       }
 
@@ -205,22 +213,36 @@ function createStartResearchLoopToolDefinition(
           return;
         }
 
+        const capturedResolve = resolveInterrupt;
+        const capturedVersion = channelVersion;
+
         const choice = await ctx.ui.select(
           "Interrupt Worker",
           ["Stop and exit loop", "Modify task instructions", "Resume (cancel)"]
         );
 
+        if (channelVersion !== capturedVersion) {
+          return;
+        }
+
         if (choice === "Stop and exit loop") {
-          resolveInterrupt?.({ type: "stop" });
-          resolveInterrupt = undefined;
+          capturedResolve?.({ type: "stop" });
+          if (resolveInterrupt === capturedResolve) {
+            resolveInterrupt = undefined;
+          }
           return;
         }
 
         if (choice === "Modify task instructions") {
           const feedback = await ctx.ui.input("New instructions for the Worker:");
+          if (channelVersion !== capturedVersion) {
+            return;
+          }
           if (feedback && feedback.trim()) {
-            resolveInterrupt?.({ type: "modify", feedback: feedback.trim() });
-            resolveInterrupt = undefined;
+            capturedResolve?.({ type: "modify", feedback: feedback.trim() });
+            if (resolveInterrupt === capturedResolve) {
+              resolveInterrupt = undefined;
+            }
           }
         }
       }
@@ -228,8 +250,13 @@ function createStartResearchLoopToolDefinition(
       const unsubscribeInput = ctx.hasUI
         ? ctx.ui.onTerminalInput((data: string) => {
             if (data === "\x18") {
-              if (resolveInterrupt) {
-                void showInterruptDialog().catch(() => undefined);
+              if (resolveInterrupt && !isDialogOpen) {
+                isDialogOpen = true;
+                void showInterruptDialog()
+                  .catch(() => undefined)
+                  .finally(() => {
+                    isDialogOpen = false;
+                  });
               }
               return { consume: true };
             }
