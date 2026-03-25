@@ -16,13 +16,13 @@ User → InteractiveMode Session → [全タスク]       → start_research_loo
 
 ### エージェント構成
 
-PI toolkitの `InteractiveMode` がメインセッションを管理し、カスタムツール経由でサブエージェントにルーティングする。
+PI toolkitの `InteractiveMode` がProxyセッションを管理し、カスタムツール経由でサブエージェントにルーティングする。
 
 | コンポーネント | 役割 | ツール |
 |---|---|---|
-| **メインセッション** | ユーザーリクエストの分類・ルーティング（PI toolkit InteractiveMode） | `start_research_loop`, `ask_user`, `web_search`, `web_fetch` + PI標準ツール |
-| **Worker Agent** | サンドボックス内でWeb調査・レポート生成 | `web_search`, `web_fetch`, `bash`, `read_file`, `write_file` 等 |
-| **Manager Agent** | Worker設定の分析・改善・効果検証 | `read_worker_config`, `read_work_product`, `update_worker_config`, `evaluate_work_product`, `read_changelog` |
+| **Proxy**（メインセッション） | ユーザーリクエストの受付・分類・ループへのルーティング | `start_research_loop`, `ask_user`, `web_search`, `web_fetch` + PI標準ツール |
+| **Manager Agent** | ループ全体の記憶保持役・ユーザーとの対話窓口。成果物の評価、ユーザーフィードバックの受信、Worker設定の改善をイテレーションをまたいで一貫して担う。会話履歴はループを通じて累積され、過去の評価・フィードバック・変更履歴を踏まえた判断が可能 | `read_worker_config`, `read_work_product`, `update_worker_config`, `evaluate_work_product`, `read_changelog` |
+| **Worker Agent** | 成果の生成に集中する実行専任エージェント。各イテレーションで独立して起動し、タスク完了後に廃棄される（ステートレス設計）。最新のWorker設定と前回の評価結果のみを受け取り、調査・レポート生成に専念する | `web_search`, `web_fetch`, `bash`, `read_file`, `write_file` 等 |
 
 ### 核心機能: 永続実行ループ（Persistence Loop）
 
@@ -190,12 +190,14 @@ TypeScriptの最新バージョンって何？
 
 `start_research_loop` が起動すると、各イテレーションで:
 
-1. **Worker Agent** がタスクを実行し成果物を生成
+1. **Worker Agent** がタスクを実行し成果物を生成（前回評価・フィードバックを受け取り実行に専念）
 2. **Manager Agent** が成果物を構造化評価（品質スコア + 課題分類）
 3. **ユーザーに判断を求める**:
    - **approve**: 成果物を承認しループ終了
-   - **improve**: 改善フィードバックを入力 → Manager が Worker設定を改善
+   - **improve**: フィードバックを入力 → Manager に直接届き、Worker設定の改善に反映される
    - **quit**: ループ中断
+
+**Manager の会話継続性**: Manager はループを通じて会話履歴を保持し続ける。ユーザーフィードバックと過去の評価が蓄積され、後続のイテレーションで一貫した改善判断が可能になる。一方 Worker は毎イテレーションでリセットされ、最新の設定と前回評価のみを受け取って実行に専念する。この分業によって、Manager は長期的な改善戦略を保ちながら、Worker は各回の成果品質を最大化できる。
 
 ループ終了後、停滞検出・ロールバック推奨・レイテンシ警告が必要に応じて適用される。
 
@@ -233,7 +235,7 @@ Manager Agentが書き換えるのは `APPEND_SYSTEM.md` のみ。`agent.md` と
 ## テスト
 
 ```bash
-# ユニットテスト（152テスト）
+# ユニットテスト（170テスト）
 npm test
 
 # 型チェック
@@ -274,3 +276,4 @@ npm run build
 2. **汎用性**: 特定のタスクドメインやテストシナリオに結合したロジックを混入しない
 3. **検証可能性**: すべての改善は仮説→変更→検証の構造で記録される
 4. **安全性**: max_iterations、停滞検出、自動ロールバック、ユーザー確認による安全弁
+5. **分業**: Manager が記憶・判断・対話を一貫して担い、Worker が実行に集中することで、それぞれの品質を最大化する
