@@ -29,3 +29,10 @@ workspace/
 
 # Git worktrees
 .worktrees/
+
+# Project-specific runtime data (investigation project artifacts)
+agents/worker/APPEND_SYSTEM.md
+agents/worker/changelog.md
+agents/worker/backups/
+agents/manager/APPEND_SYSTEM.md
+**/loop-state.json
