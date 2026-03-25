@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -122,6 +122,31 @@ describe("manager tools", () => {
     const text = getText(result);
 
     assert.equal(text, "changelog body");
+  });
+
+  it("update_worker_config rejects when write fails due to read-only file", async () => {
+    const workerConfigDir = join(tempRoot, "worker-config-readonly");
+    await mkdir(workerConfigDir, { recursive: true });
+    const appendPath = join(workerConfigDir, "APPEND_SYSTEM.md");
+    await writeFile(appendPath, "old content");
+    await chmod(appendPath, 0o444);
+
+    const tool = createUpdateWorkerConfigTool(workerConfigDir);
+    try {
+      await assert.rejects(
+        () =>
+          tool.execute("call-fail", {
+            content: "new content",
+            reason: "test",
+            hypothesis: "test",
+            expectedEffect: "test",
+            llmModel: "claude-sonnet-4"
+          }),
+        (err: unknown) => err instanceof Error
+      );
+    } finally {
+      await chmod(appendPath, 0o644);
+    }
   });
 
   it("evaluate_work_product returns content with evaluation framework", async () => {

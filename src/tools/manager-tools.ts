@@ -7,6 +7,14 @@ import type { Static } from "@sinclair/typebox";
 
 const UTF8 = "utf-8";
 
+async function writeFileVerified(filePath: string, content: string): Promise<void> {
+  await writeFile(filePath, content, UTF8);
+  const written = await readFile(filePath, UTF8);
+  if (written !== content) {
+    throw new Error(`Write verification failed for ${filePath}: content mismatch after write`);
+  }
+}
+
 const EmptyParametersSchema = Type.Object({});
 const ReadWorkProductParametersSchema = Type.Object({
   filename: Type.Optional(Type.String())
@@ -150,8 +158,8 @@ export function createUpdateWorkerConfigTool(workerConfigDir: string): AgentTool
       const timestampIso = new Date(timestampMs).toISOString();
       const backupFileName = `APPEND_SYSTEM.${timestampMs}.md`;
       await mkdir(backupsDir, { recursive: true });
-      await writeFile(join(backupsDir, backupFileName), oldContent, UTF8);
-      await writeFile(appendPath, params.content, UTF8);
+      await writeFileVerified(join(backupsDir, backupFileName), oldContent);
+      await writeFileVerified(appendPath, params.content);
 
       const changeSummary = `${summarizeChange(oldContent)} -> ${summarizeChange(params.content)}`;
       const entry = [
@@ -166,7 +174,7 @@ export function createUpdateWorkerConfigTool(workerConfigDir: string): AgentTool
 
       const existingChangelog = await readTextOrEmpty(changelogPath);
       const changelogContent = existingChangelog.trim() ? `${existingChangelog}\n\n${entry}` : entry;
-      await writeFile(changelogPath, changelogContent, UTF8);
+      await writeFileVerified(changelogPath, changelogContent);
 
       return {
         content: [{ type: "text", text: `Updated APPEND_SYSTEM.md and appended changelog at ${timestampIso}.` }],
