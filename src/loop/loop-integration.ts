@@ -103,6 +103,7 @@ function parseImprovementResponse(text: string): string[] {
 export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallbacks {
   const { ui } = options;
   let currentIteration = 1;
+  let pendingUserFeedback: string | undefined;
 
   let auditLogger: AuditLogger | null = null;
   let auditLoggerInitPromise: Promise<AuditLogger> | null = null;
@@ -180,10 +181,9 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
         const issueDescriptions = evaluation.issues
           .map((issue) => `[${issue.category}] ${issue.description}`)
           .join("; ");
-        return {
-          type: "improve",
-          feedback: issueDescriptions || `Quality score ${evaluation.qualityScore} is below threshold ${options.qualityThreshold}. Improve overall quality.`
-        };
+        const feedback = issueDescriptions || `Quality score ${evaluation.qualityScore} is below threshold ${options.qualityThreshold}. Improve overall quality.`;
+        pendingUserFeedback = feedback;
+        return { type: "improve", feedback };
       }
 
       options.statusReporter?.onFeedbackWaiting(iteration, options.maxIterations ?? 10, evaluation.qualityScore);
@@ -199,7 +199,9 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
 
       if (decision === "improve") {
         const feedback = await ui.input("Feedback for improvement:");
-        return { type: "improve", feedback: feedback?.trim() ?? "" };
+        const trimmed = feedback?.trim() ?? "";
+        pendingUserFeedback = trimmed;
+        return { type: "improve", feedback: trimmed };
       }
 
       return { type: "interrupt" };
@@ -208,6 +210,15 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
     executeImprovement: async (requests: ImprovementRequest[]): Promise<string[]> => {
       options.statusReporter?.onImprovementStart(currentIteration, options.maxIterations ?? 10);
       const managerAgent = await options.registry.get("manager");
+
+      if (pendingUserFeedback) {
+        await loopIntegrationDependencies.invokeAgent(
+          managerAgent,
+          `User feedback: ${pendingUserFeedback}`
+        );
+        pendingUserFeedback = undefined;
+      }
+
       const requestBody = requests.map((request, index) => `### Request ${index + 1}\n${formatImprovementRequest(request)}`).join("\n\n");
       const prompt = [
         "Apply the following improvement requests by updating the worker configuration.",

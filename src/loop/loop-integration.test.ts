@@ -314,6 +314,122 @@ describe("createLoopCallbacks", () => {
     assert.equal(evict.mock.calls[0]?.arguments[0], "worker");
   });
 
+  it("executeImprovement sends user feedback as first manager message when pendingUserFeedback is set", async () => {
+    const worker = createMockAgent();
+    const manager = createMockAgent();
+    const { registry } = createRegistry(worker.agent, manager.agent);
+
+    const invokeMock = mock.method(
+      loopIntegrationDependencies,
+      "invokeAgent",
+      async () => createInvokeResult("Applied")
+    );
+
+    const ui = createMockUI({
+      select: async () => "improve",
+      input: async () => "Please add more citations."
+    });
+
+    const callbacks = createLoopCallbacks({
+      registry,
+      workerConfigDir: "/tmp/worker",
+      ui
+    });
+
+    await callbacks.getUserFeedback("work product", createEvaluation(), 1);
+    await callbacks.executeImprovement([
+      {
+        issueCategory: "citations",
+        issueEvidence: "no links",
+        workProductExcerpt: "excerpt",
+        relatedConfigSection: "section",
+        improvementDirection: "direction",
+        userFeedback: "Please add more citations."
+      }
+    ]);
+
+    assert.equal(invokeMock.mock.calls.length, 2);
+    const feedbackCall = invokeMock.mock.calls[0]?.arguments[1];
+    assert.equal(String(feedbackCall).includes("Please add more citations."), true);
+    const improvementCall = invokeMock.mock.calls[1]?.arguments[1];
+    assert.equal(String(improvementCall).includes("Apply the following improvement requests"), true);
+  });
+
+  it("executeImprovement does not send extra feedback message when no pending feedback", async () => {
+    const worker = createMockAgent();
+    const manager = createMockAgent();
+    const { registry } = createRegistry(worker.agent, manager.agent);
+
+    const invokeMock = mock.method(
+      loopIntegrationDependencies,
+      "invokeAgent",
+      async () => createInvokeResult("Applied")
+    );
+
+    const callbacks = createLoopCallbacks({
+      registry,
+      workerConfigDir: "/tmp/worker",
+      ui: createMockUI()
+    });
+
+    await callbacks.executeImprovement([
+      {
+        issueCategory: "structure",
+        issueEvidence: "evidence",
+        workProductExcerpt: "excerpt",
+        relatedConfigSection: "section",
+        improvementDirection: "direction",
+        userFeedback: ""
+      }
+    ]);
+
+    assert.equal(invokeMock.mock.calls.length, 1);
+    const prompt = String(invokeMock.mock.calls[0]?.arguments[1] ?? "");
+    assert.equal(prompt.includes("Apply the following improvement requests"), true);
+  });
+
+  it("pending feedback is cleared after executeImprovement so subsequent calls do not re-inject it", async () => {
+    const worker = createMockAgent();
+    const manager = createMockAgent();
+    const { registry } = createRegistry(worker.agent, manager.agent);
+
+    const invokeMock = mock.method(
+      loopIntegrationDependencies,
+      "invokeAgent",
+      async () => createInvokeResult("Applied")
+    );
+
+    const ui = createMockUI({
+      select: async () => "improve",
+      input: async () => "First feedback"
+    });
+
+    const callbacks = createLoopCallbacks({
+      registry,
+      workerConfigDir: "/tmp/worker",
+      ui
+    });
+
+    const request: ImprovementRequest = {
+      issueCategory: "coverage",
+      issueEvidence: "evidence",
+      workProductExcerpt: "excerpt",
+      relatedConfigSection: "section",
+      improvementDirection: "direction",
+      userFeedback: "First feedback"
+    };
+
+    await callbacks.getUserFeedback("work", createEvaluation(), 1);
+    await callbacks.executeImprovement([request]);
+    const callsAfterFirst = invokeMock.mock.calls.length;
+
+    await callbacks.executeImprovement([request]);
+    const callsAfterSecond = invokeMock.mock.calls.length;
+
+    assert.equal(callsAfterFirst, 2);
+    assert.equal(callsAfterSecond - callsAfterFirst, 1);
+  });
+
   it("readCurrentConfig delegates to loadAgentConfig", async () => {
     const worker = createMockAgent();
     const manager = createMockAgent();
@@ -637,7 +753,8 @@ describe("LoopStatusReporter integration", () => {
         issueEvidence: "evidence",
         workProductExcerpt: "excerpt",
         relatedConfigSection: "section",
-        improvementDirection: "direction"
+        improvementDirection: "direction",
+        userFeedback: ""
       }
     ]);
 
