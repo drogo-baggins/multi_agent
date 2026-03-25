@@ -370,6 +370,38 @@ describe("createLoopCallbacks", () => {
     assert.equal(reports[0]?.includes("81/100"), true);
     assert.equal(reports[0]?.includes("60ms"), true);
   });
+
+  it("passes through waitForInterrupt when provided", async () => {
+    const worker = createMockAgent();
+    const manager = createMockAgent();
+    const { registry } = createRegistry(worker.agent, manager.agent);
+    const waitForInterrupt = mock.fn(async () => ({ type: "stop" as const }));
+
+    const callbacks = createLoopCallbacks({
+      registry,
+      workerConfigDir: "/tmp/worker",
+      ui: createMockUI(),
+      waitForInterrupt
+    });
+
+    assert.equal(callbacks.waitForInterrupt, waitForInterrupt);
+    const interrupt = await callbacks.waitForInterrupt?.();
+    assert.deepEqual(interrupt, { type: "stop" });
+  });
+
+  it("leaves waitForInterrupt undefined when not provided", () => {
+    const worker = createMockAgent();
+    const manager = createMockAgent();
+    const { registry } = createRegistry(worker.agent, manager.agent);
+
+    const callbacks = createLoopCallbacks({
+      registry,
+      workerConfigDir: "/tmp/worker",
+      ui: createMockUI()
+    });
+
+    assert.equal(callbacks.waitForInterrupt, undefined);
+  });
 });
 
 describe("autonomous mode (qualityThreshold)", () => {

@@ -11,6 +11,7 @@ import {
   type UserInteraction,
   type LoopStatusReporter
 } from "../loop/loop-integration.js";
+import type { InterruptRequest } from "../loop/persistence-loop.js";
 import { createAuditLogger } from "../loop/manager-audit-log.js";
 import { runDecomposedLoop } from "../loop/task-orchestrator.js";
 
@@ -191,11 +192,55 @@ function createStartResearchLoopToolDefinition(
 
       const STATUS_KEY = "loop";
       const maxIterations = params.maxIterations ?? 10;
+      let resolveInterrupt: ((req: InterruptRequest) => void) | undefined;
+
+      function resetInterruptChannel(): Promise<InterruptRequest> {
+        return new Promise<InterruptRequest>((resolve) => {
+          resolveInterrupt = resolve;
+        });
+      }
+
+      async function showInterruptDialog(): Promise<void> {
+        if (!ctx.hasUI) {
+          return;
+        }
+
+        const choice = await ctx.ui.select(
+          "Interrupt Worker",
+          ["Stop and exit loop", "Modify task instructions", "Resume (cancel)"]
+        );
+
+        if (choice === "Stop and exit loop") {
+          resolveInterrupt?.({ type: "stop" });
+          resolveInterrupt = undefined;
+          return;
+        }
+
+        if (choice === "Modify task instructions") {
+          const feedback = await ctx.ui.input("New instructions for the Worker:");
+          if (feedback && feedback.trim()) {
+            resolveInterrupt?.({ type: "modify", feedback: feedback.trim() });
+            resolveInterrupt = undefined;
+          }
+        }
+      }
+
+      const unsubscribeInput = ctx.hasUI
+        ? ctx.ui.onTerminalInput((data: string) => {
+            if (data === "\x18") {
+              if (resolveInterrupt) {
+                void showInterruptDialog().catch(() => undefined);
+              }
+              return { consume: true };
+            }
+            return undefined;
+          })
+        : () => {};
 
       const statusReporter: LoopStatusReporter | undefined = ctx.hasUI
         ? {
             onWorkerStart(iteration, max) {
-              ctx.ui.setStatus(STATUS_KEY, `Iter ${iteration}/${max} — Worker running...`);
+              ctx.ui.setStatus(STATUS_KEY, `Iter ${iteration}/${max} — Worker running...  [Ctrl+X] Interrupt`);
               ctx.ui.setWorkingMessage(`Research loop Iter ${iteration}/${max}: Worker running`);
             },
             onEvaluationStart(iteration, max) {
@@ -242,6 +287,11 @@ function createStartResearchLoopToolDefinition(
         auditLogger,
         maxIterations,
         statusReporter,
+        ...(ctx.hasUI
+          ? {
+              waitForInterrupt: () => resetInterruptChannel()
+            }
+          : {}),
         onIterationReport: (report) => {
           iterationReports.push(report);
         }
@@ -285,10 +335,11 @@ function createStartResearchLoopToolDefinition(
           details: { error: message }
         };
        } finally {
-         if (ctx.hasUI) {
-           ctx.ui.setStatus(STATUS_KEY, undefined);
-           ctx.ui.setWorkingMessage();
-         }
+          unsubscribeInput();
+          if (ctx.hasUI) {
+            ctx.ui.setStatus(STATUS_KEY, undefined);
+            ctx.ui.setWorkingMessage();
+          }
        }
     }
   };

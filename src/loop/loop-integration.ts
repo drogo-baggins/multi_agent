@@ -7,6 +7,7 @@ import { formatEvaluationReport, parseEvaluationReport } from "./evaluation-repo
 import { formatImprovementRequest, type ImprovementRequest } from "./improvement-request.js";
 import { createAuditLogger, type AuditLogger } from "./manager-audit-log.js";
 import type { IterationResult, LoopCallbacks, UserFeedback, WorkerContext } from "./persistence-loop.js";
+import type { InterruptRequest } from "./persistence-loop.js";
 
 export interface UserInteraction {
   select(title: string, options: string[]): Promise<string | undefined>;
@@ -34,6 +35,7 @@ export interface LoopIntegrationOptions {
   statusReporter?: LoopStatusReporter;
   onIterationReport?: (report: string) => void;
   auditLogger?: AuditLogger;
+  waitForInterrupt?: () => Promise<InterruptRequest>;
 }
 
 interface LoopIntegrationDependencies {
@@ -238,6 +240,8 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
       }
 
       void getAuditLogger().then((logger) => logger?.logIteration(result));
-    }
+    },
+
+    waitForInterrupt: options.waitForInterrupt
   };
 }
