@@ -88,7 +88,8 @@ describe("searchWeb", () => {
     searxngUrl: "http://searxng.local",
     timeoutMs: 250,
     maxResults: 10,
-    userAgent: "pi-agent/test"
+    userAgent: "pi-agent/test",
+    fallbackProviders: [] as import("./search-config.js").FallbackProvider[]
   };
 
   afterEach(() => {
@@ -286,5 +287,123 @@ describe("extractContent", () => {
 
     assert.equal(result.error, "request timed out");
     assert.equal(result.content, "");
+  });
+});
+
+describe("searchWeb fallback behaviour", () => {
+  afterEach(() => mock.restoreAll());
+
+  it("falls back to Tavily when SearXNG fails", async () => {
+    const config = {
+      searxngUrl: "http://searxng.local",
+      timeoutMs: 250,
+      maxResults: 3,
+      userAgent: "pi-agent/test",
+      fallbackProviders: ["tavily"] as import("./search-config.js").FallbackProvider[],
+      tavilyApiKey: "tvly-test"
+    };
+
+    mock.method(globalThis, "fetch", async (url: string) => {
+      if (url.includes("searxng")) {
+        return new Response(JSON.stringify({}), { status: 503 });
+      }
+      return new Response(JSON.stringify({
+        results: [{ title: "Tavily Hit", url: "https://tavily.example.com", content: "found via tavily" }]
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    const response = await searchWeb("fallback query", { config });
+
+    assert.equal(response.results.length, 1);
+    assert.equal(response.results[0]?.engine, "tavily");
+    assert.equal(response.results[0]?.title, "Tavily Hit");
+  });
+
+  it("tries fallbacks in order and uses first that succeeds", async () => {
+    const config = {
+      searxngUrl: "http://searxng.local",
+      timeoutMs: 250,
+      maxResults: 3,
+      userAgent: "pi-agent/test",
+      fallbackProviders: ["brave", "tavily"] as import("./search-config.js").FallbackProvider[],
+      braveApiKey: "brave-key",
+      tavilyApiKey: "tvly-key"
+    };
+
+    const calledUrls: string[] = [];
+    mock.method(globalThis, "fetch", async (url: string) => {
+      calledUrls.push(url);
+      if (url.includes("searxng") || url.includes("brave")) {
+        return new Response(JSON.stringify({}), { status: 503 });
+      }
+      return new Response(JSON.stringify({
+        results: [{ title: "Tavily Hit", url: "https://example.com", content: "ok" }]
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    const response = await searchWeb("ordered fallback", { config });
+
+    assert.ok(calledUrls.some(u => u.includes("searxng")));
+    assert.ok(calledUrls.some(u => u.includes("brave")));
+    assert.ok(calledUrls.some(u => u.includes("tavily")));
+    assert.equal(response.results[0]?.engine, "tavily");
+  });
+
+  it("throws when SearXNG fails and no fallbacks are configured", async () => {
+    const config = {
+      searxngUrl: "http://searxng.local",
+      timeoutMs: 250,
+      maxResults: 3,
+      userAgent: "pi-agent/test",
+      fallbackProviders: [] as import("./search-config.js").FallbackProvider[]
+    };
+
+    mock.method(globalThis, "fetch", async () =>
+      new Response(JSON.stringify({}), { status: 503 })
+    );
+
+    await assert.rejects(
+      () => searchWeb("no fallback", { config }),
+      /Failed to search/
+    );
+  });
+
+  it("throws when SearXNG and all fallbacks fail", async () => {
+    const config = {
+      searxngUrl: "http://searxng.local",
+      timeoutMs: 250,
+      maxResults: 3,
+      userAgent: "pi-agent/test",
+      fallbackProviders: ["serper"] as import("./search-config.js").FallbackProvider[],
+      serperApiKey: "serper-key"
+    };
+
+    mock.method(globalThis, "fetch", async () =>
+      new Response(JSON.stringify({}), { status: 503 })
+    );
+
+    await assert.rejects(
+      () => searchWeb("all fail", { config }),
+      /Failed to search/
+    );
+  });
+
+  it("skips fallback provider when its API key is missing", async () => {
+    const config = {
+      searxngUrl: "http://searxng.local",
+      timeoutMs: 250,
+      maxResults: 3,
+      userAgent: "pi-agent/test",
+      fallbackProviders: ["tavily"] as import("./search-config.js").FallbackProvider[]
+    };
+
+    mock.method(globalThis, "fetch", async () =>
+      new Response(JSON.stringify({}), { status: 503 })
+    );
+
+    await assert.rejects(
+      () => searchWeb("missing key", { config }),
+      /Failed to search/
+    );
   });
 });

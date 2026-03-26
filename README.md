@@ -155,6 +155,21 @@ SEARXNG_TIMEOUT_MS=30000                 # デフォルト
 SEARXNG_MAX_RESULTS=10                   # デフォルト
 ```
 
+#### フォールバック検索プロバイダー（オプション）
+
+SearXNGが利用できない場合に備え、外部検索APIをフォールバックとして設定できる。
+
+```bash
+SEARCH_FALLBACK_PROVIDERS=tavily,brave,serper  # 優先順位順にカンマ区切りで指定
+TAVILY_API_KEY=tvly-...                        # Tavily API キー
+BRAVE_API_KEY=...                              # Brave Search API キー
+SERPER_API_KEY=...                             # Serper API キー
+```
+
+- `SEARCH_FALLBACK_PROVIDERS` が未設定の場合、SearXNG失敗時はエラーになる
+- APIキーが未設定のプロバイダーはスキップされ、次のプロバイダーが試行される
+- プロバイダーは記述順に試行され、最初に成功したものの結果を返す
+
 ### 環境変数の設定（.envファイル）
 
 プロジェクトルートに `.env` ファイルを配置すると、起動時に自動で環境変数が読み込まれる。

@@ -9,7 +9,97 @@ src/
   agents/       エージェントファクトリ
   tools/        エージェントツール定義
   loop/         永続実行ループ
+  search/       Web検索・コンテンツ取得
   index.ts      CLIエントリーポイント
+```
+
+---
+
+## search
+
+### `SearchConfig`
+
+`search-config.ts`
+
+```typescript
+type FallbackProvider = "tavily" | "brave" | "serper";
+
+interface SearchConfig {
+  searxngUrl: string;           // SearXNG エンドポイント
+  timeoutMs: number;            // リクエストタイムアウト (ms)
+  maxResults: number;           // 返す結果の最大数
+  userAgent: string;            // HTTP User-Agent ヘッダー
+  fallbackProviders: FallbackProvider[]; // SearXNG失敗時の試行順プロバイダー
+  tavilyApiKey?: string;        // Tavily API キー
+  braveApiKey?: string;         // Brave Search API キー
+  serperApiKey?: string;        // Serper API キー
+}
+```
+
+### `loadSearchConfig(): SearchConfig`
+
+環境変数から設定を読み込む。
+
+| 環境変数 | デフォルト | 説明 |
+|---|---|---|
+| `SEARXNG_URL` | `http://localhost:8888` | SearXNG エンドポイント |
+| `SEARXNG_TIMEOUT_MS` | `30000` | リクエストタイムアウト (ms) |
+| `SEARXNG_MAX_RESULTS` | `10` | 最大結果数 |
+| `SEARCH_FALLBACK_PROVIDERS` | `""` (なし) | フォールバックプロバイダー（カンマ区切り）例: `"tavily,brave"` |
+| `TAVILY_API_KEY` | — | Tavily API キー |
+| `BRAVE_API_KEY` | — | Brave Search API キー |
+| `SERPER_API_KEY` | — | Serper API キー |
+
+### `searchWeb(query, options?): Promise<SearchResponse>`
+
+`searxng-client.ts`
+
+SearXNG に検索クエリを投げ、失敗した場合は `fallbackProviders` を順次試行する。
+
+```typescript
+interface SearchResponse {
+  results: SearchResult[];
+  query: string;
+}
+
+interface SearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+  publishedDate?: string;
+  engine?: string;  // SearXNG時はエンジン名、フォールバック時は "tavily" | "brave" | "serper"
+}
+```
+
+**フォールバック動作:**
+- SearXNG がエラー（HTTP非200・ネットワーク障害）を返すと、`fallbackProviders` を順番に試行
+- APIキーが未設定のプロバイダーはスキップ
+- すべて失敗した場合は SearXNG のエラーメッセージで throw
+
+**オプション:**
+```typescript
+{
+  limit?: number;         // 取得件数を上書き
+  config?: SearchConfig;  // テスト等で設定を注入する場合
+}
+```
+
+### `searchTavily(query, options): Promise<SearchResult[]>`
+
+### `searchBrave(query, options): Promise<SearchResult[]>`
+
+### `searchSerper(query, options): Promise<SearchResult[]>`
+
+`fallback-client.ts`
+
+各プロバイダーへの直接呼び出し。`searchWeb` のフォールバックとして内部使用するが、直接呼び出しも可能。
+
+```typescript
+interface FallbackOptions {
+  apiKey: string;
+  maxResults?: number;  // デフォルト: 10
+  timeoutMs?: number;   // デフォルト: 30000
+}
 ```
 
 ---
