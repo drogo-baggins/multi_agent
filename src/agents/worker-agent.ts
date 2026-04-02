@@ -6,6 +6,9 @@ import { loadAgentConfig } from "../config/index.js";
 import { createSandboxedTools } from "../tools/sandboxed-tools.js";
 import { createWebSearchTool } from "../tools/web-search-tool.js";
 import { createWebFetchTool } from "../tools/web-fetch-tool.js";
+import { createHumanSearchTool } from "../tools/human-search-tool.js";
+import { createHumanFetchTool } from "../tools/human-fetch-tool.js";
+import type { SearchMode } from "../search/search-config.js";
 
 export interface WorkerAgentOptions {
   configDir: string;
@@ -13,6 +16,15 @@ export interface WorkerAgentOptions {
   model?: Model<any>;
   streamFn?: StreamFn;
   getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
+  searchMode?: SearchMode;
+}
+
+export function buildWorkerTools(options: Pick<WorkerAgentOptions, "sandboxDir" | "searchMode">) {
+  const webTools =
+    options.searchMode === "human"
+      ? [createHumanSearchTool(), createHumanFetchTool()]
+      : [createWebSearchTool(), createWebFetchTool()];
+  return [...createSandboxedTools(options.sandboxDir), ...webTools];
 }
 
 export async function createWorkerAgent(options: WorkerAgentOptions): Promise<Agent> {
@@ -31,8 +43,7 @@ export async function createWorkerAgent(options: WorkerAgentOptions): Promise<Ag
     getApiKey: options.getApiKey
   });
 
-  const tools = [...createSandboxedTools(options.sandboxDir), createWebSearchTool(), createWebFetchTool()];
-  agent.setTools(tools);
+  agent.setTools(buildWorkerTools(options));
 
   return agent;
 }

@@ -7,7 +7,7 @@ import { after, before, describe, it } from "node:test";
 import { Agent } from "@mariozechner/pi-agent-core";
 import { getModel } from "@mariozechner/pi-ai";
 
-import { createWorkerAgent } from "./worker-agent.js";
+import { buildWorkerTools, createWorkerAgent } from "./worker-agent.js";
 
 const testModel = getModel("anthropic", "claude-sonnet-4-20250514");
 import { createWebSearchTool } from "../tools/web-search-tool.js";
@@ -73,5 +73,27 @@ describe("web tools", () => {
     assert.equal(tool.name, "web_fetch");
     assert.equal(tool.label, "Web Fetch");
     assert.equal(tool.description, "Fetches a web page and extracts its content as readable markdown.");
+  });
+});
+
+describe("worker-agent – buildWorkerTools", () => {
+  it("returns web_search and web_fetch in auto mode", () => {
+    const tools = buildWorkerTools({ sandboxDir: "/tmp", searchMode: "auto" });
+    const names = tools.map((t) => t.name);
+    assert.ok(names.includes("web_search"));
+    assert.ok(names.includes("web_fetch"));
+  });
+
+  it("returns web_search and web_fetch also in human mode (same names)", () => {
+    const tools = buildWorkerTools({ sandboxDir: "/tmp", searchMode: "human" });
+    const names = tools.map((t) => t.name);
+    assert.ok(names.includes("web_search"));
+    assert.ok(names.includes("web_fetch"));
+  });
+
+  it("uses human label in human mode", () => {
+    const tools = buildWorkerTools({ sandboxDir: "/tmp", searchMode: "human" });
+    const webSearch = tools.find((t) => t.name === "web_search");
+    assert.ok(webSearch?.label?.includes("Human"));
   });
 });

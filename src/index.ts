@@ -14,6 +14,7 @@ import { resolveAgentModel } from "./agents/resolve-agent-model.js";
 import { AgentRegistry } from "./communication/agent-registry.js";
 import { createCustomToolDefinitions } from "./tools/tool-definitions.js";
 import { loadEnvFile } from "./env.js";
+import { loadSearchConfig } from "./search/search-config.js";
 
 const filename = fileURLToPath(import.meta.url);
 const srcDir = dirname(filename);
@@ -27,6 +28,7 @@ const logsDir = join(projectRoot, "workspace", "logs");
 
 async function main(): Promise<void> {
   loadEnvFile();
+  const searchConfig = loadSearchConfig();
 
   const registry = new AgentRegistry();
 
@@ -44,7 +46,8 @@ async function main(): Promise<void> {
       configDir: workerConfigDir,
       sandboxDir,
       model: resolveAgentModel("worker", session.model, session.modelRegistry),
-      getApiKey
+      getApiKey,
+      searchMode: searchConfig.mode
     });
   });
 
