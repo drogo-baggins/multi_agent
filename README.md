@@ -170,6 +170,32 @@ SERPER_API_KEY=...                             # Serper API キー
 - APIキーが未設定のプロバイダーはスキップされ、次のプロバイダーが試行される
 - プロバイダーは記述順に試行され、最初に成功したものの結果を返す
 
+### 人力取得モード（Human Mode）
+
+クローラーブロック・CAPTCHA・ログイン必須コンテンツなど、自動取得が困難なサイトへの対策として **Human Mode** を用意している。ブラウザ操作は人間が行い、DOMの取得はCDPで自動化することで、人力を必要最小限に抑える。
+
+```bash
+SEARCH_MODE=human
+```
+
+**動作の流れ:**
+
+1. Worker が `web_search` を呼び出すと、ターミナルに検索語が表示される
+2. 人間がブラウザで検索し、結果ページを確認する（ログイン・CAPTCHA等も人間が処理）
+3. 結果URLとスニペットをCLIに入力（空行で終了）
+4. Worker が `web_fetch` を呼び出すと、対象URLがターミナルに表示される
+5. 人間がページを開いた後 Enter を押すと、Chrome DevTools Protocol（CDP）でDOMを自動取得
+
+**前提条件:**
+
+- Google Chrome がインストールされていること（自動検索パスで解決。見つからない場合はパスを手動指定）
+- Playwright がインストールされていること（`npm install` で自動インストール）
+
+**注意:**
+
+- `SEARCH_MODE=human` 時、SearXNG / フォールバックプロバイダーは使用されない
+- モードは起動時に固定。実行中の切り替えは未サポート（v1）
+
 ### 環境変数の設定（.envファイル）
 
 プロジェクトルートに `.env` ファイルを配置すると、起動時に自動で環境変数が読み込まれる。
@@ -290,7 +316,7 @@ Managerが書き換えるのは `APPEND_SYSTEM.md` のみ。`agent.md` と `syst
 ## テスト
 
 ```bash
-# ユニットテスト（170テスト）
+# ユニットテスト（212テスト）
 npm test
 
 # 型チェック
@@ -322,6 +348,7 @@ npm run build
 - **LLM Framework**: PI TypeScript toolkit (`pi-ai`, `pi-agent-core`, `pi-coding-agent`)
 - **LLMプロバイダー**: PI toolkitがサポートする全プロバイダー（Anthropic, OpenAI, Azure, Google, GitHub Copilot, Mistral, Groq 等）
 - **Web検索**: SearXNG（Docker）
+- **Human Mode / CDP**: Playwright (`connectOverCDP`) + Chrome DevTools Protocol
 - **Excel出力**: ExcelJS
 - **Schema**: TypeBox
 - **Test**: Node.js built-in test runner (`node:test`)

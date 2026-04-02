@@ -24,7 +24,10 @@ src/
 ```typescript
 type FallbackProvider = "tavily" | "brave" | "serper";
 
+type SearchMode = "auto" | "human";
+
 interface SearchConfig {
+  mode: SearchMode;             // 起動時固定モード (env: SEARCH_MODE)
   searxngUrl: string;           // SearXNG エンドポイント
   timeoutMs: number;            // リクエストタイムアウト (ms)
   maxResults: number;           // 返す結果の最大数
@@ -49,6 +52,7 @@ interface SearchConfig {
 | `TAVILY_API_KEY` | — | Tavily API キー |
 | `BRAVE_API_KEY` | — | Brave Search API キー |
 | `SERPER_API_KEY` | — | Serper API キー |
+| `SEARCH_MODE` | `auto` | 検索モード: `auto`（自動）または `human`（人力+CDP） |
 
 ### `searchWeb(query, options?): Promise<SearchResponse>`
 
@@ -101,6 +105,35 @@ interface FallbackOptions {
   timeoutMs?: number;   // デフォルト: 30000
 }
 ```
+
+### Human Mode モジュール
+
+#### `launchChrome(port?: number): Promise<BrowserProcess>` — `browser-launcher.ts`
+
+Chrome をリモートデバッグポート付きで起動する。OS（Windows / macOS / Linux）を自動検出してパスを解決。
+
+```typescript
+interface BrowserProcess {
+  pid: number;
+  port: number;   // CDPポート (デフォルト: 9222)
+  kill(): void;
+}
+```
+
+`user-data-dir` に専用プロファイルを使用するため、通常のChromeセッションとは独立する。
+
+#### `capturePageViaCdp(url: string, port?: number): Promise<string>` — `cdp-capture.ts`
+
+Playwright `connectOverCDP` でブラウザに接続し、指定URLのDOM全体をHTMLとして取得する。CDPポートへの接続に失敗した場合は `launchChrome` で自動起動を試みる。
+
+```typescript
+// 戻り値: ページのHTML文字列（document.documentElement.outerHTML）
+const html = await capturePageViaCdp("https://example.com");
+```
+
+#### `extractContentFromHtml(html: string, url: string): Promise<string>` — `content-extractor.ts`
+
+HTML文字列からMarkdownテキストを抽出する。`fetchAndExtract` のHTTP fetch部分を省略したバージョンで、CDP経由取得済みのHTMLに使用する。
 
 ---
 
@@ -197,14 +230,26 @@ const result = await invokeAgent(workerAgent, "調査タスク");
 
 ```typescript
 interface WorkerAgentOptions {
-  configDir: string;     // agents/worker/ ディレクトリパス
-  sandboxDir: string;    // workspace/ ディレクトリパス
-  model?: Model<any>;    // デフォルト: claude-sonnet-4-20250514
-  streamFn?: StreamFn;   // デフォルト: streamSimple
+  configDir: string;       // agents/worker/ ディレクトリパス
+  sandboxDir: string;      // workspace/ ディレクトリパス
+  model?: Model<any>;      // デフォルト: claude-sonnet-4-20250514
+  streamFn?: StreamFn;     // デフォルト: streamSimple
+  searchMode?: SearchMode; // デフォルト: "auto"。"human" 指定時は human tools を使用
 }
 ```
 
 Worker Agentを作成。設定ファイルからsystemPromptを構築し、サンドボックス化ツール + Web検索ツールを装備。
+
+### `buildWorkerTools(options: WorkerAgentOptions): ToolDefinition[]`
+
+`worker-agent.ts`
+
+`searchMode` に応じて適切なツール一式を返すファクトリ。
+
+| `searchMode` | `web_search` | `web_fetch` |
+|---|---|---|
+| `"auto"` (デフォルト) | SearXNG + フォールバック | HTTP fetch |
+| `"human"` | `createHumanSearchTool` | `createHumanFetchTool` |
 
 ### `createManagerAgent(options: ManagerAgentOptions): Promise<Agent>`
 
@@ -301,6 +346,30 @@ Web検索ツール（v1ではスタブ実装）。パラメータ: `{ query: str
 
 #### `createSandboxedTools(sandboxDir: string): AgentTool[]`
 PI toolkitの `createCodingTools` / `createBashTool` をサンドボックスディレクトリにスコープして返す。
+
+### Human Mode Tools (`human-search-tool.ts`, `human-fetch-tool.ts`)
+
+`SEARCH_MODE=human` 時に `web_search` / `web_fetch` の代替として使用されるツール群。
+
+#### `createHumanSearchTool(): AgentTool`
+
+`web_search` の人力代替ツール。パラメータ: `{ query: string, maxResults?: number }`
+
+動作フロー:
+1. ターミナルに検索語を表示しブラウザ起動を促す
+2. 検索エンジン（Google等）の URL を `capturePageViaCdp` で自動取得するか、人間がブラウザを操作して結果ページを表示
+3. 人間が結果を確認後、CLIに検索結果URLとスニペットを1件ずつ入力（空行で終了）
+4. 入力内容を `SearchResult[]` 形式で返す
+
+#### `createHumanFetchTool(): AgentTool`
+
+`web_fetch` の人力代替ツール。パラメータ: `{ url: string }`
+
+動作フロー:
+1. ターミナルに対象URLを表示しブラウザでの手動アクセスを促す
+2. 人間がページを開いた後 Enter を押すと `capturePageViaCdp` でDOMを自動取得
+3. CDP取得に失敗した場合はHTML手動入力にフォールバック
+4. 取得したHTMLを `extractContentFromHtml` でMarkdownテキストに変換して返す
 
 ---
 
