@@ -1,6 +1,6 @@
 import { chromium } from "playwright-core";
 import * as readline from "node:readline/promises";
-import { CDP_PORT } from "./browser-launcher.js";
+import { CDP_PORT, launchChromeWithCdp } from "./browser-launcher.js";
 
 export const CDP_ENDPOINT = `http://127.0.0.1:${CDP_PORT}`;
 
@@ -30,13 +30,19 @@ export async function capturePageWithCdp(
 
   let browser;
   try {
-    browser = await chromium.connectOverCDP(CDP_ENDPOINT, { timeout: 5000 });
+    browser = await chromium.connectOverCDP(CDP_ENDPOINT, { timeout: 3000 });
   } catch {
-    process.stderr.write(
-      `[human mode] CDP に接続できません（ポート ${CDP_PORT}）。\n` +
-        `Chrome が起動していない可能性があります。\n`
-    );
-    return { html: "", url: targetUrl, title: "", skipped: true };
+    process.stdout.write(`[human mode] Chrome を起動しています...\n`);
+    await launchChromeWithCdp();
+    try {
+      browser = await chromium.connectOverCDP(CDP_ENDPOINT, { timeout: 8000 });
+    } catch {
+      process.stderr.write(
+        `[human mode] CDP に接続できません。\n` +
+          `Chrome が CDP ポート ${CDP_PORT} で起動しているか確認してください。\n`
+      );
+      return { html: "", url: targetUrl, title: "", skipped: true };
+    }
   }
 
   try {
