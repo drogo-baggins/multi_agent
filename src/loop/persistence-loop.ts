@@ -55,7 +55,9 @@ export type UserFeedback =
 
 const defaultConfig: LoopConfig = {
   maxIterations: 10,
-  iterationTimeoutMs: 600_000
+  iterationTimeoutMs: process.env["ITERATION_TIMEOUT_MS"]
+    ? Number(process.env["ITERATION_TIMEOUT_MS"])
+    : 600_000
 };
 
 export interface LoopState {
