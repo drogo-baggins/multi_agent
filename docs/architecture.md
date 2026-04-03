@@ -95,7 +95,9 @@ Proxy Agentのカスタムツール内で子エージェントの `prompt()` を
 **アーキテクチャ上の判断:**
 - `web_search` / `web_fetch` ツールを丸ごと差し替える（既存コードへの侵食ゼロ）
 - ブラウザ操作（ログイン・CAPTCHA・ページ遷移）は人間が行う
-- DOM取得は Chrome DevTools Protocol（CDP）で自動化し、人力ステップを排除
+- URL開放とDOM取得は Chrome DevTools Protocol（CDP）で自動化し、人力ステップを排除
+- `capturePageWithCdp` がURL開放（`openUrlAndGetTargetId`）・ユーザー待機・DOM取得を一貫して担う
+- CDP `/json/new` のレスポンスからターゲットIDを取得し、`/json/list` で対応WS URLを特定することで、Chromeを他用途と共用していても正確なタブを選択できる（複数タブ誤選択問題の解消）
 - CDP接続失敗時は自動でChrome起動を試みる（`browser-launcher.ts`）
 - モードは起動時固定。実行中の動的切り替えは未サポート（v1）
 - `auto` モードのツールは `human` モード時に完全無効化（誤送信防止）

@@ -108,32 +108,59 @@ interface FallbackOptions {
 
 ### Human Mode モジュール
 
-#### `launchChrome(port?: number): Promise<BrowserProcess>` — `browser-launcher.ts`
+#### `browser-launcher.ts`
 
-Chrome をリモートデバッグポート付きで起動する。OS（Windows / macOS / Linux）を自動検出してパスを解決。
+| 関数 | シグネチャ | 説明 |
+|---|---|---|
+| `getUserDataDir()` | `(): string` | pi-agent専用Chromeプロファイルのパスを返す（tmpdir配下）。通常Chromeと独立 |
+| `buildChromeArgs()` | `(): string[]` | CDP起動引数配列を返す（`--remote-debugging-port`・`--user-data-dir` など） |
+| `waitForCdpReady(port?, deadlineMs?)` | `(): Promise<string>` | `/json/version` を300ms間隔でポーリングし、`webSocketDebuggerUrl` が取れたら返す。タイムアウト時はthrow |
+| `launchChromeWithCdp()` | `(): Promise<void>` | OSコマンドでChromeをCDP付きで起動。失敗時はstderrに手動起動コマンドを出力 |
+| `ensureChromeReady(port?, launchIfNeeded?)` | `(): Promise<string>` | CDPが既に応答していればそのWS URLを返す。未応答なら`launchChromeWithCdp`を呼び出し再ポーリング |
+| `openUrlAndGetTargetId(url, port?)` | `(): Promise<string \| undefined>` | CDP `/json/new` で新タブを開き、そのタブのターゲットIDを返す。CDPが未応答の場合はOSのデフォルトブラウザで開き `undefined` を返す |
+| `getWsUrlForTargetId(targetId, port?)` | `(): Promise<string \| undefined>` | CDP `/json/list` からターゲットIDに対応する `webSocketDebuggerUrl` を返す。見つからない場合は `undefined` |
+
+#### `capturePageWithCdp(url, options?)` — `cdp-capture.ts`
 
 ```typescript
-interface BrowserProcess {
-  pid: number;
-  port: number;   // CDPポート (デフォルト: 9222)
-  kill(): void;
+interface CdpCaptureOptions {
+  waitUntil?: "load" | "domcontentloaded" | "networkidle";
 }
+
+interface CdpCaptureResult {
+  html: string;
+  url: string;
+  title: string;
+  skipped: boolean;
+}
+
+async function capturePageWithCdp(
+  targetUrl: string,
+  options?: CdpCaptureOptions
+): Promise<CdpCaptureResult>
 ```
 
-`user-data-dir` に専用プロファイルを使用するため、通常のChromeセッションとは独立する。
+**処理フロー:**
+1. `ensureChromeReady` でCDPの準備を確認（未起動なら自動起動）
+2. `openUrlAndGetTargetId` で対象URLを新タブで開き、ターゲットIDを取得
+3. Playwright `connectOverCDP` で接続
+4. ユーザーが Enter を押すまで待機（ログイン・CAPTCHA等の人間操作を許容）
+5. `getWsUrlForTargetId` でターゲットIDからWS URLを特定し、URL一致でページを直接選択
+   - ターゲットIDが不明な場合はURLスコアリングでフォールバック選択
+6. DOM取得 → `CdpCaptureResult` を返す
 
-#### `capturePageViaCdp(url: string, port?: number): Promise<string>` — `cdp-capture.ts`
+ユーザーがスキップした場合または取得失敗時は `skipped: true`。
 
-Playwright `connectOverCDP` でブラウザに接続し、指定URLのDOM全体をHTMLとして取得する。CDPポートへの接続に失敗した場合は `launchChrome` で自動起動を試みる。
+#### `extractContentFromHtml(html, url)` — `content-extractor.ts`
+
+HTML文字列からMarkdownテキストを抽出する。HTTP fetchを行わないCDP専用版。
 
 ```typescript
-// 戻り値: ページのHTML文字列（document.documentElement.outerHTML）
-const html = await capturePageViaCdp("https://example.com");
+function extractContentFromHtml(
+  url: string,
+  html: string
+): { content: string; title: string; error?: string }
 ```
-
-#### `extractContentFromHtml(html: string, url: string): Promise<string>` — `content-extractor.ts`
-
-HTML文字列からMarkdownテキストを抽出する。`fetchAndExtract` のHTTP fetch部分を省略したバージョンで、CDP経由取得済みのHTMLに使用する。
 
 ---
 
@@ -356,20 +383,22 @@ PI toolkitの `createCodingTools` / `createBashTool` をサンドボックスデ
 `web_search` の人力代替ツール。パラメータ: `{ query: string, maxResults?: number }`
 
 動作フロー:
-1. ターミナルに検索語を表示しブラウザ起動を促す
-2. 検索エンジン（Google等）の URL を `capturePageViaCdp` で自動取得するか、人間がブラウザを操作して結果ページを表示
-3. 人間が結果を確認後、CLIに検索結果URLとスニペットを1件ずつ入力（空行で終了）
-4. 入力内容を `SearchResult[]` 形式で返す
+1. ターミナルに検索語を表示
+2. `capturePageWithCdp` が検索URL（Google等）を新タブで開き、ターゲットIDを取得
+3. ユーザーがブラウザで検索実行（ログイン・CAPTCHA等も人間が処理）
+4. Enter を押すと CDP でDOM自動取得
+5. 取得HTMLを `extractContentFromHtml` でMarkdownに変換して返す
 
 #### `createHumanFetchTool(): AgentTool`
 
 `web_fetch` の人力代替ツール。パラメータ: `{ url: string }`
 
 動作フロー:
-1. ターミナルに対象URLを表示しブラウザでの手動アクセスを促す
-2. 人間がページを開いた後 Enter を押すと `capturePageViaCdp` でDOMを自動取得
-3. CDP取得に失敗した場合はHTML手動入力にフォールバック
-4. 取得したHTMLを `extractContentFromHtml` でMarkdownテキストに変換して返す
+1. ターミナルに対象URLを表示
+2. `capturePageWithCdp` が対象URLを新タブで開き、ターゲットIDを取得
+3. ユーザーがページを操作（ログイン・CAPTCHA等）
+4. Enter を押すと CDP でDOM自動取得（ターゲットIDで正確なタブを特定）
+5. 取得HTMLを `extractContentFromHtml` でMarkdownに変換して返す
 
 ---
 
