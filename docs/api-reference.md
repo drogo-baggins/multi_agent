@@ -53,6 +53,7 @@ interface SearchConfig {
 | `BRAVE_API_KEY` | — | Brave Search API キー |
 | `SERPER_API_KEY` | — | Serper API キー |
 | `SEARCH_MODE` | `auto` | 検索モード: `auto`（自動）または `human`（人力+CDP） |
+| `ITERATION_TIMEOUT_MS` | `600000` | 1イテレーションあたりのタイムアウト (ms)。`SEARCH_MODE=human` では人間操作の待機時間があるため `3600000`（1時間）以上を推奨 |
 
 ### `searchWeb(query, options?): Promise<SearchResponse>`
 
@@ -413,7 +414,7 @@ PI toolkitの `createCodingTools` / `createBashTool` をサンドボックスデ
 ```typescript
 interface LoopConfig {
   maxIterations: number;       // デフォルト: 10
-  iterationTimeoutMs: number;  // デフォルト: 600,000 (10分)
+  iterationTimeoutMs: number;  // デフォルト: 600,000 (10分)。env: ITERATION_TIMEOUT_MS で上書き可能。human mode では 3,600,000 (1時間) 以上を推奨
 }
 ```
 

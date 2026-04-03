@@ -203,7 +203,7 @@ interface LoopCallbacks {
 
 #### タイムアウト
 
-各イテレーションに `iterationTimeoutMs`（デフォルト600秒）を設定。超過時はそのイテレーションを `timeout` として記録しループ終了。
+各イテレーションに `iterationTimeoutMs`（デフォルト600秒）を設定。超過時はそのイテレーションを `timeout` として記録しループ終了。環境変数 `ITERATION_TIMEOUT_MS` で変更可能。`SEARCH_MODE=human` では人間操作の待機時間があるため、`3600000`（1時間）以上への引き上げを推奨。
 
 ## 構造化評価レポート
 
