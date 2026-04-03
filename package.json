@@ -9,7 +9,7 @@
     "start": "tsx src/index.ts",
     "test": "tsx --test src/**/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "new-project": "bash scripts/new-project.sh",
+    "new-project": "node -e \"const {execSync}=require('child_process'),p=process.platform;p==='win32'?execSync('pwsh -File scripts/new-project.ps1',{stdio:'inherit'}):execSync('bash scripts/new-project.sh',{stdio:'inherit'})\"",
     "archive": "tsx scripts/archive.ts"
   },
   "keywords": [],
