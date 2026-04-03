@@ -41,11 +41,7 @@ export function createHumanSearchTool(): AgentTool<typeof HumanSearchParametersS
       process.stdout.write(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
       await openUrl(searchUrl);
 
-      process.stdout.write(`[human mode] 検索ボタンを押してください。\n`);
-      process.stdout.write(`[human mode] 結果ページが読み込まれたら自動で取得します。\n`);
-
       const result = await capturePageWithCdp(searchUrl, {
-        timeoutMs: 5 * 60 * 1000,
         waitUntil: "domcontentloaded",
       });
 

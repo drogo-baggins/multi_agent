@@ -37,11 +37,7 @@ export function createHumanFetchTool(): AgentTool<typeof HumanFetchParametersSch
       process.stdout.write(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
       await openUrl(params.url);
 
-      process.stdout.write(`[human mode] ページ操作が完了したら Enter を押してください。\n`);
-      process.stdout.write(`            （ログイン・CAPTCHA 解除後でも待機します）\n`);
-
       const result = await capturePageWithCdp(params.url, {
-        timeoutMs: 10 * 60 * 1000,
         waitUntil: "networkidle",
       });
 

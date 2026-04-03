@@ -31,6 +31,34 @@ function getChromeExecutable(): string {
   }
 }
 
+export async function waitForCdpReady(
+  port: number = CDP_PORT,
+  deadlineMs: number = 15_000
+): Promise<string> {
+  const endpoint = `http://127.0.0.1:${port}/json/version`;
+  const deadline = Date.now() + deadlineMs;
+
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(endpoint, { signal: AbortSignal.timeout(2000) });
+      if (res.ok) {
+        const json = (await res.json()) as { webSocketDebuggerUrl?: string };
+        if (json.webSocketDebuggerUrl) {
+          return json.webSocketDebuggerUrl;
+        }
+      }
+    } catch (_e) {
+      void _e;
+    }
+    await new Promise<void>(resolve => setTimeout(resolve, 300));
+  }
+
+  throw new Error(
+    `[human mode] CDP not ready on port ${port} after ${deadlineMs}ms. ` +
+    `Make sure Chrome is running with: --remote-debugging-port=${port}`
+  );
+}
+
 export async function launchChromeWithCdp(): Promise<void> {
   const exe = getChromeExecutable();
   const args = buildChromeArgs().join(" ");
@@ -41,7 +69,6 @@ export async function launchChromeWithCdp(): Promise<void> {
 
   try {
     await execAsync(cmd);
-    await new Promise(resolve => setTimeout(resolve, 1500));
   } catch {
     process.stderr.write(
       `[human mode] Chrome の自動起動に失敗しました。\n` +
@@ -51,18 +78,48 @@ export async function launchChromeWithCdp(): Promise<void> {
   }
 }
 
-export async function openUrl(url: string): Promise<void> {
+export async function ensureChromeReady(
+  port: number = CDP_PORT,
+  launchIfNeeded: boolean = true
+): Promise<string> {
   try {
-    await fetch(`http://127.0.0.1:${CDP_PORT}/json/new?${encodeURIComponent(url)}`);
+    return await waitForCdpReady(port, 3_000);
   } catch {
-    const cmd =
-      process.platform === "win32"
-        ? `start "" "${url}"`
-        : process.platform === "darwin"
-        ? `open "${url}"`
-        : `xdg-open "${url}"`;
-    await execAsync(cmd).catch(() => {
-      process.stderr.write(`[human mode] ブラウザで手動で開いてください: ${url}\n`);
-    });
+    void 0;
   }
+
+  if (!launchIfNeeded) {
+    throw new Error(
+      `[human mode] CDP not reachable on port ${port}. ` +
+      `Start Chrome with --remote-debugging-port=${port}`
+    );
+  }
+
+  process.stdout.write(`[human mode] Chrome を起動しています...\n`);
+  await launchChromeWithCdp();
+
+  return await waitForCdpReady(port, 20_000);
+}
+
+export async function openUrl(url: string, port: number = CDP_PORT): Promise<void> {
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`,
+      { signal: AbortSignal.timeout(3000) }
+    );
+    if (res.ok) return;
+  } catch {
+    void 0;
+  }
+
+  const cmd =
+    process.platform === "win32"
+      ? `start "" "${url}"`
+      : process.platform === "darwin"
+      ? `open "${url}"`
+      : `xdg-open "${url}"`;
+
+  await execAsync(cmd).catch(() => {
+    process.stderr.write(`[human mode] ブラウザで手動で開いてください: ${url}\n`);
+  });
 }
