@@ -1,7 +1,6 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
-import { openUrl } from "../search/browser-launcher.js";
 import { capturePageWithCdp } from "../search/cdp-capture.js";
 import { extractContentFromHtml } from "../search/content-extractor.js";
 
@@ -35,7 +34,6 @@ export function createHumanFetchTool(): AgentTool<typeof HumanFetchParametersSch
       process.stdout.write(`[human mode] 取得URL: ${params.url}\n`);
       process.stdout.write(`[human mode] ブラウザでページを開きます...\n`);
       process.stdout.write(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
-      await openUrl(params.url);
 
       const result = await capturePageWithCdp(params.url, {
         waitUntil: "networkidle",

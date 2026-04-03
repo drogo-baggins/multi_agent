@@ -1,6 +1,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { buildChromeArgs, getUserDataDir, waitForCdpReady } from "./browser-launcher.js";
+import {
+  buildChromeArgs,
+  getUserDataDir,
+  waitForCdpReady,
+  openUrlAndGetTargetId,
+  getWsUrlForTargetId,
+} from "./browser-launcher.js";
 
 describe("browser-launcher", () => {
   it("includes remote-debugging-port in chrome args", () => {
@@ -23,5 +29,15 @@ describe("browser-launcher", () => {
       () => waitForCdpReady(19999, 500),
       (err: Error) => err.message.includes("CDP not ready")
     );
+  });
+
+  it("openUrlAndGetTargetId returns undefined when CDP port is not open", async () => {
+    const result = await openUrlAndGetTargetId("https://example.com", 19999);
+    assert.equal(result, undefined);
+  });
+
+  it("getWsUrlForTargetId returns undefined when CDP port is not open", async () => {
+    const result = await getWsUrlForTargetId("fake-target-id", 19999);
+    assert.equal(result, undefined);
   });
 });

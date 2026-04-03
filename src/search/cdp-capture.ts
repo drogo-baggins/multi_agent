@@ -1,6 +1,11 @@
 import { chromium, type Page } from "playwright-core";
 import * as readline from "node:readline/promises";
-import { CDP_PORT, ensureChromeReady } from "./browser-launcher.js";
+import {
+  CDP_PORT,
+  ensureChromeReady,
+  openUrlAndGetTargetId,
+  getWsUrlForTargetId,
+} from "./browser-launcher.js";
 
 export const CDP_ENDPOINT = `http://127.0.0.1:${CDP_PORT}`;
 
@@ -39,10 +44,24 @@ async function waitForUserEnter(prompt: string): Promise<void> {
 
 async function selectPage(
   pages: Page[],
-  targetUrl: string
+  targetUrl: string,
+  targetWsUrl?: string
 ): Promise<{ page: Page | undefined; skipped: boolean }> {
   if (pages.length === 0) {
     return { page: undefined, skipped: true };
+  }
+
+  // Direct match by WS URL path suffix (CDP target ID embedded in WS URL)
+  if (targetWsUrl) {
+    const wsSuffix = targetWsUrl.replace(/^ws:\/\/[^/]+/, "");
+    const direct = pages.find(p => {
+      const u = p.url();
+      return u.includes(wsSuffix) || wsSuffix.includes(u);
+    });
+    // Try matching by page URL equality first, then fall through to scoring
+    const byUrl = pages.find(p => normalizeUrl(p.url()) === normalizeUrl(targetUrl));
+    if (byUrl) return { page: byUrl, skipped: false };
+    if (direct) return { page: direct, skipped: false };
   }
 
   const scored = pages
@@ -89,6 +108,8 @@ export async function capturePageWithCdp(
     return { html: "", url: targetUrl, title: "", skipped: true };
   }
 
+  const targetId = await openUrlAndGetTargetId(targetUrl, CDP_PORT);
+
   const browser = await chromium.connectOverCDP(wsUrl, { timeout: 10_000 });
 
   try {
@@ -101,8 +122,13 @@ export async function capturePageWithCdp(
       `[human mode] ${targetUrl} を開いたら Enter を押してください: `
     );
 
+    let targetWsUrl: string | undefined;
+    if (targetId) {
+      targetWsUrl = await getWsUrlForTargetId(targetId, CDP_PORT);
+    }
+
     const pages = context.pages();
-    const { page, skipped } = await selectPage(pages, targetUrl);
+    const { page, skipped } = await selectPage(pages, targetUrl, targetWsUrl);
 
     if (skipped || !page) {
       return { html: "", url: targetUrl, title: "", skipped: true };

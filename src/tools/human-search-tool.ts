@@ -1,7 +1,6 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
-import { openUrl } from "../search/browser-launcher.js";
 import { capturePageWithCdp } from "../search/cdp-capture.js";
 import { extractContentFromHtml } from "../search/content-extractor.js";
 
@@ -39,7 +38,6 @@ export function createHumanSearchTool(): AgentTool<typeof HumanSearchParametersS
       process.stdout.write(`[human mode] 検索クエリ: ${params.query}\n`);
       process.stdout.write(`[human mode] ブラウザで検索ページを開きます...\n`);
       process.stdout.write(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
-      await openUrl(searchUrl);
 
       const result = await capturePageWithCdp(searchUrl, {
         waitUntil: "domcontentloaded",

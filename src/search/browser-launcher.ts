@@ -101,17 +101,35 @@ export async function ensureChromeReady(
   return await waitForCdpReady(port, 20_000);
 }
 
-export async function openUrl(url: string, port: number = CDP_PORT): Promise<void> {
+interface CdpTargetInfo {
+  id?: string;
+  type?: string;
+  url?: string;
+  webSocketDebuggerUrl?: string;
+}
+
+/**
+ * Open a URL via CDP /json/new and return the new tab's target ID.
+ * Falls back to OS-open when CDP is unreachable (returns undefined).
+ */
+export async function openUrlAndGetTargetId(
+  url: string,
+  port: number = CDP_PORT
+): Promise<string | undefined> {
   try {
     const res = await fetch(
       `http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`,
       { signal: AbortSignal.timeout(3000) }
     );
-    if (res.ok) return;
+    if (res.ok) {
+      const json = (await res.json()) as CdpTargetInfo;
+      return json.id;
+    }
   } catch {
     void 0;
   }
 
+  // Fallback: OS open (target ID unknown)
   const cmd =
     process.platform === "win32"
       ? `start "" "${url}"`
@@ -122,4 +140,30 @@ export async function openUrl(url: string, port: number = CDP_PORT): Promise<voi
   await execAsync(cmd).catch(() => {
     process.stderr.write(`[human mode] ブラウザで手動で開いてください: ${url}\n`);
   });
+
+  return undefined;
+}
+
+/**
+ * Get the webSocketDebuggerUrl for a given CDP target ID.
+ * Returns undefined if not found.
+ */
+export async function getWsUrlForTargetId(
+  targetId: string,
+  port: number = CDP_PORT
+): Promise<string | undefined> {
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:${port}/json/list`,
+      { signal: AbortSignal.timeout(2000) }
+    );
+    if (res.ok) {
+      const targets = (await res.json()) as CdpTargetInfo[];
+      const match = targets.find(t => t.id === targetId);
+      return match?.webSocketDebuggerUrl;
+    }
+  } catch {
+    void 0;
+  }
+  return undefined;
 }
