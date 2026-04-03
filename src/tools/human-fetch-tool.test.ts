@@ -11,8 +11,9 @@ describe("human-fetch-tool – formatFetchResult", () => {
   });
 
   it("truncates content over MAX_CONTENT_CHARS", () => {
-    const long = "x".repeat(35000);
+    const long = "x".repeat(85000);
     const result = formatFetchResult("https://example.com", "T", long);
-    assert.ok(result.includes("[Content truncated...]"));
+    assert.ok(result.includes("[Content truncated at"));
+    assert.ok(result.includes("Fetching this URL again will return the same result"));
   });
 });

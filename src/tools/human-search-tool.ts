@@ -4,7 +4,7 @@ import type { Static } from "@sinclair/typebox";
 import { capturePageWithCdp } from "../search/cdp-capture.js";
 import { extractContentFromHtml } from "../search/content-extractor.js";
 
-const MAX_CONTENT_CHARS = 30000;
+const MAX_CONTENT_CHARS = 80000;
 
 export function buildSearchUrl(query: string): string {
   const encoded = encodeURIComponent(query);
@@ -58,7 +58,7 @@ export function createHumanSearchTool(): AgentTool<typeof HumanSearchParametersS
       const extracted = extractContentFromHtml(result.url, result.html);
       const truncated = extracted.content.length > MAX_CONTENT_CHARS;
       const body = truncated
-        ? `${extracted.content.slice(0, MAX_CONTENT_CHARS)}\n\n[Content truncated...]`
+        ? `${extracted.content.slice(0, MAX_CONTENT_CHARS)}\n\n[Content truncated at ${MAX_CONTENT_CHARS} characters. Fetching this URL again will return the same result — the remaining content cannot be retrieved.]`
         : extracted.content;
 
       const formattedMarkdown = [
