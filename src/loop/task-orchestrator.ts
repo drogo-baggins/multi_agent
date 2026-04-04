@@ -150,7 +150,8 @@ async function persistUnitCompletion(
 /** Race a task factory against an optional interrupt channel.
  *  When the interrupt wins, aborts the underlying operation via AbortController
  *  and returns the full InterruptRequest so callers can distinguish stop vs modify.
- *  Handles a single query-manager interrupt inline: queries the manager and re-races. */
+ *  Loops on query-manager: handles each via onQueryManager and re-races on the same
+ *  underlying promise until stop/modify/value arrives. */
 async function raceOrResolve<T>(
   taskFn: (signal: AbortSignal) => Promise<T>,
   waitForInterrupt: (() => Promise<InterruptRequest>) | undefined,
@@ -163,25 +164,31 @@ async function raceOrResolve<T>(
   if (!waitForInterrupt) {
     return { kind: "value", value: await promise };
   }
-  const interruptP = waitForInterrupt();
+  let interruptP = waitForInterrupt();
   void interruptP.catch(() => undefined);
-  const result = await Promise.race([
-    promise.then((v) => ({ kind: "value" as const, value: v })),
-    interruptP.then((request) => ({ kind: "interrupt" as const, request }))
-  ]);
-  if (result.kind === "interrupt") {
+  // Loop so that any number of query-manager interrupts are handled inline without
+  // surfacing to the caller, re-racing the same underlying promise each time.
+  while (true) {
+    const result = await Promise.race([
+      promise.then((v) => ({ kind: "value" as const, value: v })),
+      interruptP.then((request) => ({ kind: "interrupt" as const, request }))
+    ]);
+    if (result.kind === "value") {
+      return result;
+    }
     if (result.request.type === "query-manager") {
       await onQueryManager?.(result.request.question);
-      const newInterruptP = waitForInterrupt();
-      void newInterruptP.catch(() => undefined);
-      return Promise.race([
-        promise.then((v) => ({ kind: "value" as const, value: v })),
-        newInterruptP.then((request) => ({ kind: "interrupt" as const, request }))
-      ]);
+      if (!waitForInterrupt) break;
+      interruptP = waitForInterrupt();
+      void interruptP.catch(() => undefined);
+      continue;
     }
+    // stop or modify: abort the running task and return to caller
     controller.abort();
+    return result;
   }
-  return result;
+  // Unreachable: only reached if waitForInterrupt disappears mid-loop
+  return { kind: "value", value: await promise };
 }
 
 export async function runDecomposedLoop(options: DecomposedLoopOptions): Promise<DecomposedLoopResult> {

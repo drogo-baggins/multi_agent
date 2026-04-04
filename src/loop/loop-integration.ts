@@ -269,14 +269,6 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
       void getAuditLogger().then((logger) => logger?.logIteration(result));
     },
 
-    onQueryManager: async (question: string): Promise<string> => {
-      const managerAgent = await options.registry.get("manager");
-      const response = await loopIntegrationDependencies.invokeAgent(managerAgent, question);
-      const text = extractTextOrThrow(response);
-      ui.notify(`マネージャーからの回答:\n${text}`);
-      return text;
-    },
-
     waitForInterrupt: options.waitForInterrupt
   };
 }

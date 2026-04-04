@@ -4,6 +4,7 @@ import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
 
 import type { AgentRegistry } from "../communication/agent-registry.js";
+import { invokeAgent } from "../communication/invoke-agent.js";
 import { searchWeb } from "../search/index.js";
 import { extractContent } from "../search/index.js";
 import { urlCache } from "./url-cache.js";
@@ -263,10 +264,15 @@ function createStartResearchLoopToolDefinition(
             return;
           }
           if (question && question.trim()) {
-            capturedResolve?.({ type: "query-manager", question: question.trim() });
-            // Do not clear resolveInterrupt — the loop will call waitForInterrupt() again
-            // and a new channel will be set up for the next interrupt
+            const managerAgent = await registry.get("manager");
+            const response = await invokeAgent(managerAgent, question.trim());
+            const text = response.content
+              .filter((b): b is { type: "text"; text: string } => b.type === "text" && "text" in b)
+              .map((b) => b.text)
+              .join("");
+            ctx.ui.notify(`マネージャーからの回答:\n${text}`);
           }
+          // Do not resolve the interrupt channel — the worker continues unaffected
         }
       }
 

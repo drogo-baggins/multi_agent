@@ -518,6 +518,20 @@ describe("createLoopCallbacks", () => {
 
     assert.equal(callbacks.waitForInterrupt, undefined);
   });
+
+  it("does not expose onQueryManager since manager queries are handled inline in showInterruptDialog", () => {
+    const worker = createMockAgent();
+    const manager = createMockAgent();
+    const { registry } = createRegistry(worker.agent, manager.agent);
+
+    const callbacks = createLoopCallbacks({
+      registry,
+      workerConfigDir: "/tmp/worker",
+      ui: createMockUI()
+    });
+
+    assert.equal((callbacks as Record<string, unknown>).onQueryManager, undefined);
+  });
 });
 
 describe("autonomous mode (qualityThreshold)", () => {

@@ -273,4 +273,80 @@ describe("runDecomposedLoop", () => {
     assert.equal(notifications.some((n) => n.includes("[2/2]") && n.includes("開始")), true);
     assert.equal(notifications.some((n) => n.includes("[2/2]") && n.includes("完了")), true);
   });
+
+  it("multiple sequential query-manager interrupts during decompose do not stop the loop", async () => {
+    const units = [
+      createWorkUnit({ goal: "Unit A", scope: "A" }),
+      createWorkUnit({ goal: "Unit B", scope: "B" })
+    ];
+    const queryQuestions: string[] = [];
+    let interruptCallIdx = 0;
+
+    // Produces: query-manager x2, then never fires (decompose finishes first)
+    const waitForInterrupt = () => new Promise<import("./persistence-loop.js").InterruptRequest>((resolve) => {
+      interruptCallIdx += 1;
+      if (interruptCallIdx <= 2) {
+        resolve({ type: "query-manager", question: `Q${interruptCallIdx}` });
+      }
+      // else: never resolves → decompose wins
+    });
+
+    const result = await runDecomposedLoop({
+      task: "Main",
+      managerAgent: {} as Agent,
+      callbacks: {
+        ...createCallbacks(),
+        onQueryManager: async (q) => { queryQuestions.push(q); return "answer"; }
+      },
+      // Delay long enough for 2 synchronous query-manager interrupts to be handled first
+      decomposeTaskFn: async () => { await new Promise<void>((r) => setTimeout(r, 50)); return units; },
+      runPersistenceLoopFn: async (task: string) => [createIterationResult({ workProduct: `ok:${task}` })],
+      synthesizeResultsFn: async () => "done",
+      waitForInterrupt
+    });
+
+    assert.equal(queryQuestions.length, 2);
+    assert.deepEqual(queryQuestions, ["Q1", "Q2"]);
+    assert.equal(result.wasInterrupted, undefined);
+    assert.equal(result.workUnitResults.length, 2);
+  });
+
+  it("stop after query-manager during decompose aborts the task and returns wasInterrupted", async () => {
+    let interruptCallIdx = 0;
+    let aborted = false;
+
+    const waitForInterrupt = () => new Promise<import("./persistence-loop.js").InterruptRequest>((resolve) => {
+      interruptCallIdx += 1;
+      // First call: query-manager; second: stop
+      resolve(interruptCallIdx === 1
+        ? { type: "query-manager", question: "What's happening?" }
+        : { type: "stop" }
+      );
+    });
+
+    const result = await runDecomposedLoop({
+      task: "Main",
+      managerAgent: {} as Agent,
+      callbacks: {
+        ...createCallbacks(),
+        onQueryManager: async () => "manager answer"
+      },
+      decomposeTaskFn: async (_, __, opts) => {
+        // Long decompose so interrupt wins
+        await new Promise<void>((resolve, reject) => {
+          const t = setTimeout(resolve, 500);
+          opts?.signal?.addEventListener("abort", () => { clearTimeout(t); aborted = true; reject(new DOMException("Aborted", "AbortError")); });
+        });
+        return [createWorkUnit({ goal: "A", scope: "A" })];
+      },
+      runPersistenceLoopFn: async () => [],
+      synthesizeResultsFn: async () => "unused",
+      waitForInterrupt
+    });
+
+    assert.equal(aborted, true);
+    assert.equal(result.wasInterrupted, true);
+    assert.equal(result.workUnitResults.length, 0);
+  });
 });
+

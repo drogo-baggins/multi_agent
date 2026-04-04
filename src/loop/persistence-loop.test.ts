@@ -312,6 +312,48 @@ describe("runPersistenceLoop", () => {
     assert.equal(results[0]?.workProduct, "fast-work");
   });
 
+  it("query-manager interrupt during worker phase does not stop the worker; loop completes normally", async () => {
+    let channelCalls = 0;
+    let queryCallCount = 0;
+    const queryResponses: string[] = [];
+
+    const callbacks: LoopCallbacks = {
+      executeWorker: async () => {
+        await sleep(20);
+        return "worker-result";
+      },
+      evaluateProduct: async () => createReport(),
+      getUserFeedback: async () => ({ type: "approved" }),
+      executeImprovement: async () => [],
+      onIterationComplete: () => {},
+      readCurrentConfig: async () => "# config",
+      onQueryManager: async (question: string) => {
+        queryCallCount += 1;
+        queryResponses.push(question);
+        return "manager-answer";
+      },
+      waitForInterrupt: async () => {
+        channelCalls += 1;
+        if (channelCalls === 1) {
+          // First channel: fire query-manager immediately
+          await sleep(0);
+          return { type: "query-manager", question: "What is the status?" };
+        }
+        // Subsequent channels: never fire (worker finishes first)
+        await sleep(1_000);
+        return { type: "stop" };
+      }
+    };
+
+    const results = await runPersistenceLoop("task", callbacks, { iterationTimeoutMs: 500, maxIterations: 1 });
+
+    assert.equal(queryCallCount, 1);
+    assert.deepEqual(queryResponses, ["What is the status?"]);
+    assert.equal(results.length, 1);
+    assert.equal(results[0]?.outcome, "user-approved");
+    assert.equal(results[0]?.workProduct, "worker-result");
+  });
+
   it("handles waitForInterrupt rejection after worker completes without unhandled rejection", async () => {
     const callbacks: LoopCallbacks = {
       executeWorker: async () => "fast-work",
