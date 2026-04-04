@@ -149,10 +149,12 @@ async function persistUnitCompletion(
 
 /** Race a task factory against an optional interrupt channel.
  *  When the interrupt wins, aborts the underlying operation via AbortController
- *  and returns the full InterruptRequest so callers can distinguish stop vs modify. */
+ *  and returns the full InterruptRequest so callers can distinguish stop vs modify.
+ *  Handles a single query-manager interrupt inline: queries the manager and re-races. */
 async function raceOrResolve<T>(
   taskFn: (signal: AbortSignal) => Promise<T>,
-  waitForInterrupt: (() => Promise<InterruptRequest>) | undefined
+  waitForInterrupt: (() => Promise<InterruptRequest>) | undefined,
+  onQueryManager?: (question: string) => Promise<string>
 ): Promise<{ kind: "value"; value: T } | { kind: "interrupt"; request: InterruptRequest }> {
   const controller = new AbortController();
   const promise = taskFn(controller.signal);
@@ -168,6 +170,15 @@ async function raceOrResolve<T>(
     interruptP.then((request) => ({ kind: "interrupt" as const, request }))
   ]);
   if (result.kind === "interrupt") {
+    if (result.request.type === "query-manager") {
+      await onQueryManager?.(result.request.question);
+      const newInterruptP = waitForInterrupt();
+      void newInterruptP.catch(() => undefined);
+      return Promise.race([
+        promise.then((v) => ({ kind: "value" as const, value: v })),
+        newInterruptP.then((request) => ({ kind: "interrupt" as const, request }))
+      ]);
+    }
     controller.abort();
   }
   return result;
@@ -203,7 +214,8 @@ export async function runDecomposedLoop(options: DecomposedLoopOptions): Promise
       // Different task or no state → fresh decomposition
       const decomposeRaced = await raceOrResolve(
         (signal) => decompose(options.managerAgent, options.task, { signal }),
-        options.waitForInterrupt
+        options.waitForInterrupt,
+        options.callbacks.onQueryManager
       );
       if (decomposeRaced.kind === "interrupt") {
         // Both stop and modify must return early (no units available to run)
@@ -228,7 +240,8 @@ export async function runDecomposedLoop(options: DecomposedLoopOptions): Promise
   } else {
     const decomposeRaced2 = await raceOrResolve(
       (signal) => decompose(options.managerAgent, options.task, { signal }),
-      options.waitForInterrupt
+      options.waitForInterrupt,
+      options.callbacks.onQueryManager
     );
     if (decomposeRaced2.kind === "interrupt") {
       if (decomposeRaced2.request.type === "modify") pendingFeedback = decomposeRaced2.request.feedback;
@@ -346,14 +359,15 @@ export async function runDecomposedLoop(options: DecomposedLoopOptions): Promise
         unit.retryCount += 1;
         const resplitRaced = await raceOrResolve(
           (signal) => decompose(options.managerAgent, unit.goal, { signal }),
-          options.waitForInterrupt
+          options.waitForInterrupt,
+          options.callbacks.onQueryManager
         );
         if (resplitRaced.kind === "interrupt") {
           if (resplitRaced.request.type === "stop") {
             return { synthesizedWorkProduct: completed[completed.length - 1]?.findings ?? "", workUnitResults: completed, totalDurationMs: Math.max(0, Date.now() - startMs), wasSingleUnit: false, wasInterrupted: true };
           }
-          // modify: skip the resplit, carry feedback forward to next unit
-          pendingFeedback = resplitRaced.request.feedback;
+          // modify or query-manager: skip the resplit, carry feedback forward to next unit
+          if (resplitRaced.request.type === "modify") pendingFeedback = resplitRaced.request.feedback;
           unit.status = "failed";
           const failedNoResplit: WorkUnitResult = { workUnit: unit, findings: final.workProduct, remainingWork: [unit.goal], durationMs: sumIterationDuration(loopResults) };
           completed.push(failedNoResplit);
@@ -410,7 +424,8 @@ export async function runDecomposedLoop(options: DecomposedLoopOptions): Promise
   const synthesisStart = Date.now();
   const synthesizeRaced = await raceOrResolve(
     (signal) => synthesize(options.managerAgent, options.task, completed, { signal }),
-    options.waitForInterrupt
+    options.waitForInterrupt,
+    options.callbacks.onQueryManager
   );
   if (synthesizeRaced.kind === "interrupt") {
     if (stateFilePath) await deleteLoopState(stateFilePath);

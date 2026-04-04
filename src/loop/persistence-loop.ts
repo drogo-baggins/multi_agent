@@ -44,11 +44,13 @@ export interface LoopCallbacks {
   onIterationStateSaved?: (iteration: number, stateFile: string) => void;
   readCurrentConfig: () => Promise<string>;
   waitForInterrupt?: () => Promise<InterruptRequest>;
+  onQueryManager?: (question: string) => Promise<string>;
 }
 
 export type InterruptRequest =
   | { type: "stop" }
-  | { type: "modify"; feedback: string };
+  | { type: "modify"; feedback: string }
+  | { type: "query-manager"; question: string };
 
 export type UserFeedback =
   | { type: "approved" }
@@ -242,10 +244,24 @@ export async function runPersistenceLoop(
       if (callbacks.waitForInterrupt) {
         currentInterruptPromise = callbacks.waitForInterrupt();
         void currentInterruptPromise.catch(() => undefined);
-        const raced = await Promise.race([
+        let raced = await Promise.race([
           workerPromise.then((value) => ({ kind: "worker", value }) as const),
           currentInterruptPromise.then((request) => ({ kind: "interrupt", request }) as const)
         ]);
+
+        while (raced.kind === "interrupt" && raced.request.type === "query-manager") {
+          await callbacks.onQueryManager?.(raced.request.question);
+          currentInterruptPromise = callbacks.waitForInterrupt?.();
+          if (currentInterruptPromise) {
+            void currentInterruptPromise.catch(() => undefined);
+            raced = await Promise.race([
+              workerPromise.then((value) => ({ kind: "worker", value }) as const),
+              currentInterruptPromise.then((request) => ({ kind: "interrupt", request }) as const)
+            ]);
+          } else {
+            raced = { kind: "worker", value: await workerPromise };
+          }
+        }
 
         if (raced.kind === "interrupt") {
           void workerPromise.catch(() => undefined);
@@ -270,6 +286,7 @@ export async function runPersistenceLoop(
             await maybeSaveState();
             return results;
           }
+          if (raced.request.type === "query-manager") { /* unreachable — handled in loop above */ continue; }
 
           lastFeedback = raced.request.feedback;
           lastEvaluation = undefined;
@@ -288,12 +305,25 @@ export async function runPersistenceLoop(
       const evaluationStart = now();
       currentInterruptPromise = callbacks.waitForInterrupt?.();
       if (currentInterruptPromise) void currentInterruptPromise.catch(() => undefined);
-      const evalRaced = await withTimeoutAndInterrupt(
+      let evalRaced = await withTimeoutAndInterrupt(
         (signal) => callbacks.evaluateProduct(workProduct, signal),
         loopConfig.iterationTimeoutMs,
         currentInterruptPromise
       );
+
+      while (evalRaced.kind === "interrupt" && evalRaced.request.type === "query-manager") {
+        await callbacks.onQueryManager?.(evalRaced.request.question);
+        currentInterruptPromise = callbacks.waitForInterrupt?.();
+        if (currentInterruptPromise) void currentInterruptPromise.catch(() => undefined);
+        evalRaced = await withTimeoutAndInterrupt(
+          (signal) => callbacks.evaluateProduct(workProduct, signal),
+          loopConfig.iterationTimeoutMs,
+          currentInterruptPromise
+        );
+      }
+
       if (evalRaced.kind === "interrupt") {
+        if (evalRaced.request.type === "query-manager") { /* unreachable */ continue; }
         evaluationMs = Math.max(0, now() - evaluationStart);
         const interruptedResult = createResult({
           iteration, startMs: iterationStart, workProduct,
@@ -320,12 +350,25 @@ export async function runPersistenceLoop(
       // --- User feedback phase ---
       currentInterruptPromise = callbacks.waitForInterrupt?.();
       if (currentInterruptPromise) void currentInterruptPromise.catch(() => undefined);
-      const feedbackRaced = await withTimeoutAndInterrupt(
+      let feedbackRaced = await withTimeoutAndInterrupt(
         (_signal) => callbacks.getUserFeedback(workProduct, evaluation, iteration),
         loopConfig.iterationTimeoutMs,
         currentInterruptPromise
       );
+
+      while (feedbackRaced.kind === "interrupt" && feedbackRaced.request.type === "query-manager") {
+        await callbacks.onQueryManager?.(feedbackRaced.request.question);
+        currentInterruptPromise = callbacks.waitForInterrupt?.();
+        if (currentInterruptPromise) void currentInterruptPromise.catch(() => undefined);
+        feedbackRaced = await withTimeoutAndInterrupt(
+          (_signal) => callbacks.getUserFeedback(workProduct, evaluation, iteration),
+          loopConfig.iterationTimeoutMs,
+          currentInterruptPromise
+        );
+      }
+
       if (feedbackRaced.kind === "interrupt") {
+        if (feedbackRaced.request.type === "query-manager") { /* unreachable */ continue; }
         const interruptedResult = createResult({
           iteration, startMs: iterationStart, workProduct, evaluation, improvements: [],
           workerExecutionMs, evaluationMs, managerImprovementMs,
@@ -394,12 +437,25 @@ export async function runPersistenceLoop(
       const requests = buildImprovementRequests(evaluation, workProduct, currentConfig, feedback.feedback);
       currentInterruptPromise = callbacks.waitForInterrupt?.();
       if (currentInterruptPromise) void currentInterruptPromise.catch(() => undefined);
-      const improveRaced = await withTimeoutAndInterrupt(
+      let improveRaced = await withTimeoutAndInterrupt(
         (signal) => callbacks.executeImprovement(requests, signal),
         loopConfig.iterationTimeoutMs,
         currentInterruptPromise
       );
+
+      while (improveRaced.kind === "interrupt" && improveRaced.request.type === "query-manager") {
+        await callbacks.onQueryManager?.(improveRaced.request.question);
+        currentInterruptPromise = callbacks.waitForInterrupt?.();
+        if (currentInterruptPromise) void currentInterruptPromise.catch(() => undefined);
+        improveRaced = await withTimeoutAndInterrupt(
+          (signal) => callbacks.executeImprovement(requests, signal),
+          loopConfig.iterationTimeoutMs,
+          currentInterruptPromise
+        );
+      }
+
       if (improveRaced.kind === "interrupt") {
+        if (improveRaced.request.type === "query-manager") { /* unreachable */ continue; }
         managerImprovementMs = Math.max(0, now() - managerStart);
         const interruptedResult = createResult({
           iteration, startMs: iterationStart, workProduct, evaluation, improvements: [],

@@ -229,7 +229,7 @@ function createStartResearchLoopToolDefinition(
 
         const choice = await ctx.ui.select(
           "Interrupt Worker",
-          ["Stop and exit loop", "Modify task instructions", "Resume (cancel)"]
+          ["Stop and exit loop", "Modify task instructions", "Ask manager a question", "Resume (cancel)"]
         );
 
         if (channelVersion !== capturedVersion) {
@@ -254,6 +254,18 @@ function createStartResearchLoopToolDefinition(
             if (resolveInterrupt === capturedResolve) {
               resolveInterrupt = undefined;
             }
+          }
+        }
+
+        if (choice === "Ask manager a question") {
+          const question = await ctx.ui.input("Question for the Manager:");
+          if (channelVersion !== capturedVersion) {
+            return;
+          }
+          if (question && question.trim()) {
+            capturedResolve?.({ type: "query-manager", question: question.trim() });
+            // Do not clear resolveInterrupt — the loop will call waitForInterrupt() again
+            // and a new channel will be set up for the next interrupt
           }
         }
       }
