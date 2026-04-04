@@ -56,3 +56,27 @@ export async function extractContent(
     clearTimeout(timeout);
   }
 }
+
+/**
+ * HTML 文字列から readable markdown を抽出する。
+ * CDP / Playwright など HTTP GET を経由しない取得手段と組み合わせて使う。
+ * 戻り値の型は extractContent() と同一。
+ */
+export function extractContentFromHtml(url: string, html: string): ExtractedContent {
+  try {
+    const { document } = parseHTML(html);
+    const article = new Readability(document).parse();
+    if (!article?.content) {
+      return { url, title: "", content: "", error: "Could not extract content" };
+    }
+    return {
+      url,
+      title: article.title || "",
+      content: turndown.turndown(article.content),
+      byline: article.byline || undefined
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { url, title: "", content: "", error: message };
+  }
+}

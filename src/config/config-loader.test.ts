@@ -32,11 +32,13 @@ describe("config loader", () => {
     const result = await loadAgentConfig(agentDir);
 
     const chunks = result.split("\n\n");
-    assert.equal(chunks[0], "agent-section");
-    assert.equal(chunks[1], "system-section");
+    // chunks[0] is the date header injected at runtime
+    assert.ok(chunks[0].includes("現在日付"), "first chunk should be the date header");
+    assert.equal(chunks[1], "agent-section");
+    assert.equal(chunks[2], "system-section");
     assert.equal(chunks[chunks.length - 1], "append-section");
-    assert.equal(chunks.length, 5);
-    assert.deepEqual(chunks.slice(2, 4), ["skill-a", "skill-b"]);
+    assert.equal(chunks.length, 6);
+    assert.deepEqual(chunks.slice(3, 5), ["skill-a", "skill-b"]);
   });
 
   it("skips missing files without throwing", async () => {
@@ -46,7 +48,8 @@ describe("config loader", () => {
 
     const result = await loadAgentConfig(agentDir);
 
-    assert.equal(result, "only-system");
+    assert.ok(result.includes("only-system"));
+    assert.ok(result.includes("現在日付"));
   });
 
   it("loads only requested skills when skills are specified", async () => {
@@ -60,7 +63,10 @@ describe("config loader", () => {
 
     const result = await loadAgentConfig(agentDir, ["gamma", "alpha"]);
 
-    assert.equal(result, ["agent", "gamma", "alpha"].join("\n\n"));
+    assert.ok(result.includes("agent"));
+    assert.ok(result.includes("gamma"));
+    assert.ok(result.includes("alpha"));
+    assert.ok(!result.includes("beta"));
   });
 
   it("returns empty string for empty directories", async () => {
@@ -69,7 +75,8 @@ describe("config loader", () => {
 
     const result = await loadAgentConfig(agentDir);
 
-    assert.equal(result, "");
+    // With no agent content, only the date header is returned
+    assert.ok(result.includes("現在日付"));
   });
 });
 

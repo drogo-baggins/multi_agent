@@ -237,3 +237,45 @@ interface ImprovementRequest {
 | ループ暴走 | max_iterations + ユーザー確認 + タイムアウト |
 | 問題検知誤判定 | ユーザー確認ゲート（v1） + 構造化評価レポート |
 | 時間爆発 | レイテンシ計測 + 目標上限 + 超過通知 |
+
+## Human Mode アーキテクチャ
+
+`SEARCH_MODE=human` 時、Web取得ツールが自動ヘッドレス実行からユーザー介在型のCDP経由取得に切り替わる。
+
+### ツール切り替え（`buildWorkerTools()`）
+
+`src/agents/worker-agent.ts` の `buildWorkerTools()` が `searchMode` に応じてツールセットを選択する。
+
+```
+searchMode === "human"
+  → [createHumanSearchTool(), createHumanFetchTool(), ...sandboxedTools]
+
+searchMode !== "human"（デフォルト "auto"）
+  → [createWebSearchTool(), createWebFetchTool(), ...sandboxedTools]
+```
+
+`src/index.ts` が起動時に `loadSearchConfig()` を呼び出し、`SEARCH_MODE` 環境変数を読み取って `searchMode` を Worker Registry ファクトリに注入する。
+
+### 専用タブ管理（`cdp-session.ts`）
+
+タブの乱立を防ぐため、`cdp-session.ts` はタイトルが `"pi-agent-dedicated"` のタブを Singleton として管理する。
+
+```
+getOrCreateDedicatedTab()
+  → 既存タブ検索（document.title === "pi-agent-dedicated"）
+  → 未発見時のみ新規タブ作成
+  → navigateTo(url) でナビゲーション
+```
+
+Worker プロセス終了時のシャットダウンフックが `clearSessionState()` を呼び出し、Playwright ブラウザ参照を解放する。
+
+### Chrome 自動起動フロー（`browser-launcher.ts`）
+
+```
+ensureChromeReady(port)
+  → waitForCdpReady(port, deadline=3s)  ← 既存 Chrome を検出
+  → 応答なし → launchChromeWithCdp()   ← Chrome プロセス起動
+  → waitForCdpReady(port, deadline=10s) ← 起動完了待機
+```
+
+`buildChromeArgs()` が `SearchConfig` から `chromeWindowPosition` / `chromeWindowSize` を読み取り、`--window-position` / `--window-size` フラグを条件付きで付与する。

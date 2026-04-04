@@ -38,7 +38,10 @@ describe("manager agent factory", () => {
     const agent = await createManagerAgent({ configDir, workerConfigDir, sandboxDir, model: testModel });
 
     assert.ok(agent instanceof Agent);
-    assert.equal(agent.state.systemPrompt, "manager-agent\n\nmanager-system\n\nmanager-append");
+    assert.ok(agent.state.systemPrompt.includes("manager-agent"));
+    assert.ok(agent.state.systemPrompt.includes("manager-system"));
+    assert.ok(agent.state.systemPrompt.includes("manager-append"));
+    assert.ok(agent.state.systemPrompt.includes("現在日付"));
   });
 
   it("registers manager tools", async () => {

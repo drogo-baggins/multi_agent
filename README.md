@@ -170,6 +170,25 @@ SERPER_API_KEY=...                             # Serper API キー
 - APIキーが未設定のプロバイダーはスキップされ、次のプロバイダーが試行される
 - プロバイダーは記述順に試行され、最初に成功したものの結果を返す
 
+### Human Mode（人間支援型Web取得）
+
+CAPTCHAやログイン壁など、自動取得が困難なページを扱う場合は Human Mode を使用する。エージェントがWeb取得を行うたびにChromeブラウザに結果が表示され、ユーザーがページを確認してから内容を渡す。
+
+```bash
+# .env に追加
+SEARCH_MODE=human
+```
+
+Chrome が自動起動する（CDP ポート 9222）。ページごとにターミナルの確認プロンプトが表示される。
+
+事前確認（Chrome の検出・起動・CDP 接続を一括チェック）:
+
+```bash
+npm run chrome-setup
+```
+
+詳細は [Human Mode ガイド](docs/human-mode.md) を参照。
+
 ### 環境変数の設定（.envファイル）
 
 プロジェクトルートに `.env` ファイルを配置すると、起動時に自動で環境変数が読み込まれる。
@@ -314,6 +333,7 @@ npm run build
 - [Architecture Guide](docs/architecture.md) — 設計判断とシステム構成
 - [API Reference](docs/api-reference.md) — モジュール別の公開API
 - [Developer Guide](docs/developer-guide.md) — 開発環境・テスト・ディレクトリ構造
+- [Human Mode ガイド](docs/human-mode.md) — SEARCH_MODE=human の設定・操作・トラブルシューティング
 
 ## 技術スタック
 

@@ -71,5 +71,17 @@ export async function loadAgentConfig(agentDir: string, skills?: string[]): Prom
     sections.push(appendSection);
   }
 
-  return sections.join("\n\n");
+  const now = new Date();
+  const currentDate = now.toLocaleDateString("ja-JP", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: "Asia/Tokyo"
+  });
+  const dateHeader =
+    `# システム情報\n` +
+    `現在日付: ${currentDate}（JST）\n` +
+    `この日付はシステムが実行時に設定した正確な値です。レポート・サブタスク結果・進捗ファイル内の日付記载にはこの値を使用し、学習データに基づく推測の日付を使用してはならない。`;
+
+  return [dateHeader, ...sections].join("\n\n");
 }

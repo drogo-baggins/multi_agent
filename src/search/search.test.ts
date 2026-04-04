@@ -407,3 +407,34 @@ describe("searchWeb fallback behaviour", () => {
     );
   });
 });
+
+describe("loadSearchConfig – SEARCH_MODE", () => {
+  let saved: string | undefined;
+
+  beforeEach(() => {
+    saved = process.env.SEARCH_MODE;
+    delete process.env.SEARCH_MODE;
+  });
+
+  afterEach(() => {
+    if (saved === undefined) {
+      delete process.env.SEARCH_MODE;
+    } else {
+      process.env.SEARCH_MODE = saved;
+    }
+  });
+
+  it("defaults to auto when SEARCH_MODE is unset", () => {
+    assert.equal(loadSearchConfig().mode, "auto");
+  });
+
+  it("returns human when SEARCH_MODE=human", () => {
+    process.env.SEARCH_MODE = "human";
+    assert.equal(loadSearchConfig().mode, "human");
+  });
+
+  it("defaults to auto for unknown SEARCH_MODE value", () => {
+    process.env.SEARCH_MODE = "invalid";
+    assert.equal(loadSearchConfig().mode, "auto");
+  });
+});

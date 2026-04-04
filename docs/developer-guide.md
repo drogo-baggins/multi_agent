@@ -20,6 +20,11 @@ npm install
 ```bash
 # LLM APIキー（E2E・POCテスト実行に必要）
 export ANTHROPIC_API_KEY=sk-ant-...
+
+# Human Mode（SEARCH_MODE=human 時み使用）
+export SEARCH_MODE=human                 # "auto"(デフォルト) | "human"
+export CHROME_WINDOW_POSITION=0,0        # ウィンドウ位置 X,Y（オプション）
+export CHROME_WINDOW_SIZE=1280,900       # ウィンドウサイズ W,H（オプション）
 ```
 
 ## プロジェクト構造
@@ -70,7 +75,22 @@ pi-agent/
 │   │   ├── sandboxed-tools.ts
 │   │   ├── manager-tools.ts
 │   │   ├── proxy-tools.ts
-│   │   ├── manager-tools.test.ts
+    │   ├── human-search-tool.ts   # Human Mode 検索ツール
+    │   ├── human-fetch-tool.ts    # Human Mode 取得ツール
+    │   ├── human-input-reader.ts  # CLI 入力ヘルパー（END/SKIP）
+    │   ├── manager-tools.test.ts
+    │   ├── human-search-tool.test.ts
+    │   ├── human-fetch-tool.test.ts
+    │   ├── human-input-reader.test.ts
+    │   └── index.ts
+    ├── search/                # Web取得設定・CDPスタック
+    │   ├── search-config.ts       # SearchMode型と設定ローダー
+    │   ├── browser-launcher.ts    # Chrome 起動・CDP接続
+    │   ├── cdp-session.ts         # 専用タブ Singleton 管理
+    │   ├── cdp-capture.ts         # DOM取得 + Enter待機
+    │   ├── content-extractor.ts   # HTML → Markdown 変換
+    │   ├── browser-launcher.test.ts
+    │   ├── cdp-session.test.ts
 │   │   └── index.ts
 │   ├── loop/                  # 永続実行ループ
 │   │   ├── persistence-loop.ts
