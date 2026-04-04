@@ -80,22 +80,43 @@ async function main(): Promise<void> {
       const isComplete = logContent.includes("## Synthesis Complete");
       if (!isComplete) {
         const taskMatch = logContent.match(/^\*\*Task\*\*:\s*(.+)$/m);
-        const task = taskMatch?.[1]?.trim();
+        const rawTask = taskMatch?.[1]?.trim();
+        // Strip any accumulated resume suffixes to recover the original task string
+        const RESUME_MARKER = "（前回の作業が中断されています";
+        const markerIdx = rawTask?.indexOf(RESUME_MARKER) ?? -1;
+        const task = rawTask ? (markerIdx >= 0 ? rawTask.slice(0, markerIdx).trim() : rawTask) : undefined;
         if (task) {
-          // Read progress.md to embed concrete completion state in the resume message.
-          // Extract only サブタスク一覧 + 現在の状態 (first occurrence = top-level task).
+          // Read ALL progress*.md files. Include sections from those NOT marked 完了,
+          // so the snapshot reflects the current live investigation, not the completed original task.
           let progressSnapshot = "";
           try {
-            const progressPath = join(projectRoot, "workspace", "output", "progress.md");
-            const progressContent = await readFile(progressPath, "utf-8");
+            const { readdir: readdirFn } = await import("node:fs/promises");
+            const outputDir = join(projectRoot, "workspace", "output");
+            const allFiles = (await readdirFn(outputDir))
+              .filter((f) => f.startsWith("progress") && f.endsWith(".md"))
+              .sort();
+
             const snapshotParts: string[] = [];
-            const subtaskMatch = progressContent.match(/## サブタスク一覧\n([\s\S]*?)(?=\n## |\n---)/);
-            const stateMatch = progressContent.match(/## 現在の状態\n([\s\S]*?)(?=\n## |\n---)/);
-            if (subtaskMatch) snapshotParts.push(`## サブタスク一覧\n${subtaskMatch[1].trim()}`);
-            if (stateMatch) snapshotParts.push(`## 現在の状態\n${stateMatch[1].trim()}`);
-            progressSnapshot = snapshotParts.join("\n\n");
+            for (const file of allFiles) {
+              try {
+                const content = await readFile(join(outputDir, file), "utf-8");
+                // First occurrence of 現在の状態 determines whether this file is complete
+                const stateMatch = content.match(/## 現在の状態\n([\s\S]*?)(?=\n## |\n---|$)/);
+                const stateText = stateMatch?.[1] ?? "";
+                const isFileDone = stateText.includes("完了");
+                if (!isFileDone) {
+                  const subtaskMatch = content.match(/## サブタスク一覧\n([\s\S]*?)(?=\n## |\n---|$)/);
+                  const titleMatch = content.match(/^#\s+(.+)$/m);
+                  const title = titleMatch?.[1] ?? file;
+                  const subtasks = subtaskMatch ? `## サブタスク一覧\n${subtaskMatch[1].trim()}` : "";
+                  const state = stateMatch ? `## 現在の状態\n${stateText.trim()}` : "";
+                  snapshotParts.push(`### ${title} (${file})\n${[subtasks, state].filter(Boolean).join("\n\n")}`);
+                }
+              } catch { /* skip unreadable file */ }
+            }
+            progressSnapshot = snapshotParts.join("\n\n---\n\n");
           } catch {
-            // No progress.md yet — use generic resume message
+            // No output dir yet — use generic resume message
           }
 
           if (progressSnapshot) {

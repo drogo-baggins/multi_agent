@@ -344,7 +344,8 @@ function createStartResearchLoopToolDefinition(
           auditLogger,
           notify: ui.notify,
           maxIterationsPerUnit: maxIterations,
-          iterationTimeoutMs: 600_000
+          iterationTimeoutMs: 600_000,
+          logsDir
         });
 
         const summary = [
