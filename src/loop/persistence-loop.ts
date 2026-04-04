@@ -9,6 +9,8 @@ export interface LoopConfig {
   iterationTimeoutMs: number;
   stateDir?: string;
   resumeFromIteration?: number;
+  /** Feedback from a prior interrupt to inject into the first worker iteration. */
+  initialFeedback?: string;
 }
 
 export interface IterationResult {
@@ -35,9 +37,9 @@ export interface WorkerContext {
 
 export interface LoopCallbacks {
   executeWorker: (task: string, context: WorkerContext) => Promise<string>;
-  evaluateProduct: (workProduct: string) => Promise<EvaluationReport>;
+  evaluateProduct: (workProduct: string, signal?: AbortSignal) => Promise<EvaluationReport>;
   getUserFeedback: (workProduct: string, evaluation: EvaluationReport, iteration: number) => Promise<UserFeedback>;
-  executeImprovement: (requests: ImprovementRequest[]) => Promise<string[]>;
+  executeImprovement: (requests: ImprovementRequest[], signal?: AbortSignal) => Promise<string[]>;
   onIterationComplete: (result: IterationResult) => void;
   onIterationStateSaved?: (iteration: number, stateFile: string) => void;
   readCurrentConfig: () => Promise<string>;
@@ -122,20 +124,31 @@ type InterruptRaced<T> =
   | { kind: "interrupt"; request: InterruptRequest };
 
 /** Like `withTimeout`, but also races against an optional interrupt promise.
+ *  Takes a factory `taskFn(signal)` so the underlying operation receives an AbortSignal
+ *  and will be aborted if the interrupt wins the race.
  *  Returns a tagged union so callers can distinguish the two outcomes. */
 async function withTimeoutAndInterrupt<T>(
-  promise: Promise<T>,
+  taskFn: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
   interruptPromise: Promise<InterruptRequest> | undefined
 ): Promise<InterruptRaced<T>> {
+  const controller = new AbortController();
+  const promise = taskFn(controller.signal);
+  // Attach catch to suppress unhandled-rejection warnings if we abort the promise
+  void promise.catch(() => undefined);
   const timedPromise = withTimeout(promise, timeoutMs);
   if (!interruptPromise) {
     return { kind: "value", value: await timedPromise };
   }
-  return Promise.race([
+  const result = await Promise.race([
     timedPromise.then((value) => ({ kind: "value", value }) as const),
     interruptPromise.then((request) => ({ kind: "interrupt", request }) as const)
   ]);
+  if (result.kind === "interrupt") {
+    controller.abort();
+    void timedPromise.catch(() => undefined);
+  }
+  return result;
 }
 
 function emptyEvaluation(): EvaluationReport {
@@ -184,7 +197,7 @@ export async function runPersistenceLoop(
   const results: IterationResult[] = [];
   const startIteration = loopConfig.resumeFromIteration ?? 1;
   let lastEvaluation: EvaluationReport | undefined;
-  let lastFeedback: string | undefined;
+  let lastFeedback: string | undefined = loopConfig.initialFeedback;
 
   const loopState: LoopState = {
     task,
@@ -276,7 +289,7 @@ export async function runPersistenceLoop(
       currentInterruptPromise = callbacks.waitForInterrupt?.();
       if (currentInterruptPromise) void currentInterruptPromise.catch(() => undefined);
       const evalRaced = await withTimeoutAndInterrupt(
-        callbacks.evaluateProduct(workProduct),
+        (signal) => callbacks.evaluateProduct(workProduct, signal),
         loopConfig.iterationTimeoutMs,
         currentInterruptPromise
       );
@@ -308,7 +321,7 @@ export async function runPersistenceLoop(
       currentInterruptPromise = callbacks.waitForInterrupt?.();
       if (currentInterruptPromise) void currentInterruptPromise.catch(() => undefined);
       const feedbackRaced = await withTimeoutAndInterrupt(
-        callbacks.getUserFeedback(workProduct, evaluation, iteration),
+        (_signal) => callbacks.getUserFeedback(workProduct, evaluation, iteration),
         loopConfig.iterationTimeoutMs,
         currentInterruptPromise
       );
@@ -382,7 +395,7 @@ export async function runPersistenceLoop(
       currentInterruptPromise = callbacks.waitForInterrupt?.();
       if (currentInterruptPromise) void currentInterruptPromise.catch(() => undefined);
       const improveRaced = await withTimeoutAndInterrupt(
-        callbacks.executeImprovement(requests),
+        (signal) => callbacks.executeImprovement(requests, signal),
         loopConfig.iterationTimeoutMs,
         currentInterruptPromise
       );

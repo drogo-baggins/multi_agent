@@ -175,11 +175,11 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
       return extractTextOrThrow(response);
     },
 
-    evaluateProduct: async (workProduct: string) => {
+    evaluateProduct: async (workProduct: string, signal?: AbortSignal) => {
       options.statusReporter?.onEvaluationStart(currentIteration, options.maxIterations ?? 10);
       const managerAgent = await options.registry.get("manager");
       const prompt = `${evaluationPromptHeader}\n${workProduct}`;
-      const response = await loopIntegrationDependencies.invokeAgent(managerAgent, prompt);
+      const response = await loopIntegrationDependencies.invokeAgent(managerAgent, prompt, signal);
       return parseEvaluationReport(extractTextOrThrow(response));
     },
 
@@ -222,14 +222,15 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
       return { type: "interrupt" };
     },
 
-    executeImprovement: async (requests: ImprovementRequest[]): Promise<string[]> => {
+    executeImprovement: async (requests: ImprovementRequest[], signal?: AbortSignal): Promise<string[]> => {
       options.statusReporter?.onImprovementStart(currentIteration, options.maxIterations ?? 10);
       const managerAgent = await options.registry.get("manager");
 
       if (pendingUserFeedback) {
         await loopIntegrationDependencies.invokeAgent(
           managerAgent,
-          `User feedback: ${pendingUserFeedback}`
+          `User feedback: ${pendingUserFeedback}`,
+          signal
         );
         pendingUserFeedback = undefined;
       }
@@ -242,7 +243,7 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
         requestBody
       ].join("\n");
 
-      const response = await loopIntegrationDependencies.invokeAgent(managerAgent, prompt);
+      const response = await loopIntegrationDependencies.invokeAgent(managerAgent, prompt, signal);
       const text = extractTextOrThrow(response);
       options.registry.evict("worker");
       const responses = parseImprovementResponse(text);

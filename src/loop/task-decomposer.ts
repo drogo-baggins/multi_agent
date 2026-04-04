@@ -25,6 +25,7 @@ const decompositionPrompt = [
 
 interface DecomposeOptions {
   invokeAgentFn?: typeof invokeAgent;
+  signal?: AbortSignal;
 }
 
 function extractTextFromResult(result: { content: Array<{ type: string; text?: string }> }): string {
@@ -64,7 +65,7 @@ export async function decomposeTask(
 ): Promise<WorkUnit[]> {
   const invoke = options?.invokeAgentFn ?? invokeAgent;
   const prompt = `${decompositionPrompt}\n${task}`;
-  const response = await invoke(managerAgent, prompt);
+  const response = await invoke(managerAgent, prompt, options?.signal);
   const text = extractTextFromResult(response);
   return parseDecompositionResponse(text);
 }

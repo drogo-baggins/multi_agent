@@ -98,6 +98,7 @@ export interface DecomposedLoopResult {
   workUnitResults: WorkUnitResult[];
   totalDurationMs: number;
   wasSingleUnit: boolean;
+  wasInterrupted?: boolean;
 }
 
 function sumIterationDuration(results: IterationResult[]): number {
@@ -146,17 +147,30 @@ async function persistUnitCompletion(
   await writeLoopState(stateFilePath, state);
 }
 
+/** Race a task factory against an optional interrupt channel.
+ *  When the interrupt wins, aborts the underlying operation via AbortController
+ *  and returns the full InterruptRequest so callers can distinguish stop vs modify. */
 async function raceOrResolve<T>(
-  promise: Promise<T>,
+  taskFn: (signal: AbortSignal) => Promise<T>,
   waitForInterrupt: (() => Promise<InterruptRequest>) | undefined
-): Promise<{ kind: "value"; value: T } | { kind: "interrupt" }> {
-  if (!waitForInterrupt) return { kind: "value", value: await promise };
+): Promise<{ kind: "value"; value: T } | { kind: "interrupt"; request: InterruptRequest }> {
+  const controller = new AbortController();
+  const promise = taskFn(controller.signal);
+  // Suppress unhandled-rejection warnings if we abort before the promise resolves
+  void promise.catch(() => undefined);
+  if (!waitForInterrupt) {
+    return { kind: "value", value: await promise };
+  }
   const interruptP = waitForInterrupt();
   void interruptP.catch(() => undefined);
-  return Promise.race([
+  const result = await Promise.race([
     promise.then((v) => ({ kind: "value" as const, value: v })),
-    interruptP.then(() => ({ kind: "interrupt" as const }))
+    interruptP.then((request) => ({ kind: "interrupt" as const, request }))
   ]);
+  if (result.kind === "interrupt") {
+    controller.abort();
+  }
+  return result;
 }
 
 export async function runDecomposedLoop(options: DecomposedLoopOptions): Promise<DecomposedLoopResult> {
@@ -174,6 +188,8 @@ export async function runDecomposedLoop(options: DecomposedLoopOptions): Promise
   let initialUnits: WorkUnit[];
   let savedState: LoopStateFile | null = null;
   let isResume = false;
+  // Feedback carried from a modify interrupt during decompose/resplit/synthesize into next runLoop
+  let pendingFeedback: string | undefined;
 
   if (stateFilePath) {
     savedState = await readLoopState(stateFilePath);
@@ -185,9 +201,14 @@ export async function runDecomposedLoop(options: DecomposedLoopOptions): Promise
       );
     } else {
       // Different task or no state → fresh decomposition
-      const decomposeRaced = await raceOrResolve(decompose(options.managerAgent, options.task), options.waitForInterrupt);
+      const decomposeRaced = await raceOrResolve(
+        (signal) => decompose(options.managerAgent, options.task, { signal }),
+        options.waitForInterrupt
+      );
       if (decomposeRaced.kind === "interrupt") {
-        return { synthesizedWorkProduct: "", workUnitResults: [], totalDurationMs: Math.max(0, Date.now() - startMs), wasSingleUnit: false };
+        // Both stop and modify must return early (no units available to run)
+        if (decomposeRaced.request.type === "modify") pendingFeedback = decomposeRaced.request.feedback;
+        return { synthesizedWorkProduct: "", workUnitResults: [], totalDurationMs: Math.max(0, Date.now() - startMs), wasSingleUnit: false, wasInterrupted: true };
       }
       initialUnits = decomposeRaced.value;
       const plan = createDecompositionPlan(options.task, initialUnits);
@@ -205,9 +226,13 @@ export async function runDecomposedLoop(options: DecomposedLoopOptions): Promise
       savedState = newState;
     }
   } else {
-    const decomposeRaced2 = await raceOrResolve(decompose(options.managerAgent, options.task), options.waitForInterrupt);
+    const decomposeRaced2 = await raceOrResolve(
+      (signal) => decompose(options.managerAgent, options.task, { signal }),
+      options.waitForInterrupt
+    );
     if (decomposeRaced2.kind === "interrupt") {
-      return { synthesizedWorkProduct: "", workUnitResults: [], totalDurationMs: Math.max(0, Date.now() - startMs), wasSingleUnit: false };
+      if (decomposeRaced2.request.type === "modify") pendingFeedback = decomposeRaced2.request.feedback;
+      return { synthesizedWorkProduct: "", workUnitResults: [], totalDurationMs: Math.max(0, Date.now() - startMs), wasSingleUnit: false, wasInterrupted: true };
     }
     initialUnits = decomposeRaced2.value;
     const plan = createDecompositionPlan(options.task, initialUnits);
@@ -289,8 +314,10 @@ export async function runDecomposedLoop(options: DecomposedLoopOptions): Promise
     unit.status = "in-progress";
     const loopResults = await runLoop(unit.goal, options.callbacks, {
       maxIterations: options.maxIterationsPerUnit ?? 3,
-      iterationTimeoutMs: options.iterationTimeoutMs
+      iterationTimeoutMs: options.iterationTimeoutMs,
+      ...(pendingFeedback ? { initialFeedback: pendingFeedback } : {})
     });
+    pendingFeedback = undefined;
 
     const final = lastResult(loopResults);
     if (!final) {
@@ -304,7 +331,8 @@ export async function runDecomposedLoop(options: DecomposedLoopOptions): Promise
         synthesizedWorkProduct: completed[completed.length - 1]?.findings ?? "",
         workUnitResults: completed,
         totalDurationMs: Math.max(0, Date.now() - startMs),
-        wasSingleUnit: false
+        wasSingleUnit: false,
+        wasInterrupted: true
       };
     }
 
@@ -316,9 +344,21 @@ export async function runDecomposedLoop(options: DecomposedLoopOptions): Promise
 
       if (canRetry && canResplitByDepth) {
         unit.retryCount += 1;
-        const resplitRaced = await raceOrResolve(decompose(options.managerAgent, unit.goal), options.waitForInterrupt);
+        const resplitRaced = await raceOrResolve(
+          (signal) => decompose(options.managerAgent, unit.goal, { signal }),
+          options.waitForInterrupt
+        );
         if (resplitRaced.kind === "interrupt") {
-          return { synthesizedWorkProduct: completed[completed.length - 1]?.findings ?? "", workUnitResults: completed, totalDurationMs: Math.max(0, Date.now() - startMs), wasSingleUnit: false };
+          if (resplitRaced.request.type === "stop") {
+            return { synthesizedWorkProduct: completed[completed.length - 1]?.findings ?? "", workUnitResults: completed, totalDurationMs: Math.max(0, Date.now() - startMs), wasSingleUnit: false, wasInterrupted: true };
+          }
+          // modify: skip the resplit, carry feedback forward to next unit
+          pendingFeedback = resplitRaced.request.feedback;
+          unit.status = "failed";
+          const failedNoResplit: WorkUnitResult = { workUnit: unit, findings: final.workProduct, remainingWork: [unit.goal], durationMs: sumIterationDuration(loopResults) };
+          completed.push(failedNoResplit);
+          qualityScores.push(final.evaluation.qualityScore);
+          continue;
         }
         const subUnits = resplitRaced.value;
         const childSpecs = subUnits.map((child) => ({
@@ -368,10 +408,13 @@ export async function runDecomposedLoop(options: DecomposedLoopOptions): Promise
   }
 
   const synthesisStart = Date.now();
-  const synthesizeRaced = await raceOrResolve(synthesize(options.managerAgent, options.task, completed), options.waitForInterrupt);
+  const synthesizeRaced = await raceOrResolve(
+    (signal) => synthesize(options.managerAgent, options.task, completed, { signal }),
+    options.waitForInterrupt
+  );
   if (synthesizeRaced.kind === "interrupt") {
     if (stateFilePath) await deleteLoopState(stateFilePath);
-    return { synthesizedWorkProduct: completed[completed.length - 1]?.findings ?? "", workUnitResults: completed, totalDurationMs: Math.max(0, Date.now() - startMs), wasSingleUnit: false };
+    return { synthesizedWorkProduct: completed[completed.length - 1]?.findings ?? "", workUnitResults: completed, totalDurationMs: Math.max(0, Date.now() - startMs), wasSingleUnit: false, wasInterrupted: true };
   }
   const synthesizedWorkProduct = synthesizeRaced.value;
   const synthesisDuration = Math.max(0, Date.now() - synthesisStart);

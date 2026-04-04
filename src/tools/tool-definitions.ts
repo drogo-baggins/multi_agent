@@ -349,6 +349,25 @@ function createStartResearchLoopToolDefinition(
           ...(ctx.hasUI ? { waitForInterrupt: () => resetInterruptChannel() } : {})
         });
 
+        if (result.wasInterrupted) {
+          const interruptSummary = [
+            `Research interrupted: ${result.workUnitResults.length} work unit(s) completed before interruption`,
+            `Total duration: ${(result.totalDurationMs / 1000).toFixed(1)}s`,
+            "",
+            "Iteration reports:",
+            ...iterationReports
+          ].join("\n");
+          return {
+            content: [{ type: "text", text: result.synthesizedWorkProduct || interruptSummary }],
+            details: {
+              workUnitCount: result.workUnitResults.length,
+              wasSingleUnit: result.wasSingleUnit,
+              wasInterrupted: true,
+              totalDurationMs: result.totalDurationMs
+            }
+          };
+        }
+
         const summary = [
           `Research completed: ${result.workUnitResults.length} work unit(s)`,
           result.wasSingleUnit

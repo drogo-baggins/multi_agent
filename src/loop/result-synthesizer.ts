@@ -28,6 +28,7 @@ export function formatSynthesisPrompt(originalTask: string, results: WorkUnitRes
 
 interface SynthesizeOptions {
   invokeAgentFn?: typeof invokeAgent;
+  signal?: AbortSignal;
 }
 
 function extractText(result: { content: Array<{ type: string; text?: string }> }): string {
@@ -46,6 +47,6 @@ export async function synthesizeResults(
 ): Promise<string> {
   const invoke = options?.invokeAgentFn ?? invokeAgent;
   const prompt = formatSynthesisPrompt(originalTask, results);
-  const response = await invoke(managerAgent, prompt);
+  const response = await invoke(managerAgent, prompt, options?.signal);
   return extractText(response);
 }
