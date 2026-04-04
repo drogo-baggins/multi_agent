@@ -117,6 +117,27 @@ function isTimeoutError(error: unknown): boolean {
   return error instanceof Error && error.message === timeoutErrorMessage;
 }
 
+type InterruptRaced<T> =
+  | { kind: "value"; value: T }
+  | { kind: "interrupt"; request: InterruptRequest };
+
+/** Like `withTimeout`, but also races against an optional interrupt promise.
+ *  Returns a tagged union so callers can distinguish the two outcomes. */
+async function withTimeoutAndInterrupt<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  interruptPromise: Promise<InterruptRequest> | undefined
+): Promise<InterruptRaced<T>> {
+  const timedPromise = withTimeout(promise, timeoutMs);
+  if (!interruptPromise) {
+    return { kind: "value", value: await timedPromise };
+  }
+  return Promise.race([
+    timedPromise.then((value) => ({ kind: "value", value }) as const),
+    interruptPromise.then((request) => ({ kind: "interrupt", request }) as const)
+  ]);
+}
+
 function emptyEvaluation(): EvaluationReport {
   return {
     qualityScore: 0,
@@ -192,6 +213,8 @@ export async function runPersistenceLoop(
     let workerExecutionMs = 0;
     let evaluationMs = 0;
     let managerImprovementMs = 0;
+    // Fresh interrupt channel for each phase within this iteration
+    let currentInterruptPromise: Promise<InterruptRequest> | undefined;
 
     try {
       const workerContext: WorkerContext = {
@@ -204,11 +227,11 @@ export async function runPersistenceLoop(
       const workerPromise = withTimeout(callbacks.executeWorker(task, workerContext), loopConfig.iterationTimeoutMs);
 
       if (callbacks.waitForInterrupt) {
-        const interruptPromise = callbacks.waitForInterrupt();
-        void interruptPromise.catch(() => undefined);
+        currentInterruptPromise = callbacks.waitForInterrupt();
+        void currentInterruptPromise.catch(() => undefined);
         const raced = await Promise.race([
           workerPromise.then((value) => ({ kind: "worker", value }) as const),
-          interruptPromise.then((request) => ({ kind: "interrupt", request }) as const)
+          currentInterruptPromise.then((request) => ({ kind: "interrupt", request }) as const)
         ]);
 
         if (raced.kind === "interrupt") {
@@ -248,14 +271,67 @@ export async function runPersistenceLoop(
         workerExecutionMs = Math.max(0, now() - workerStart);
       }
 
+      // --- Evaluation phase ---
       const evaluationStart = now();
-      evaluation = await withTimeout(callbacks.evaluateProduct(workProduct), loopConfig.iterationTimeoutMs);
+      currentInterruptPromise = callbacks.waitForInterrupt?.();
+      if (currentInterruptPromise) void currentInterruptPromise.catch(() => undefined);
+      const evalRaced = await withTimeoutAndInterrupt(
+        callbacks.evaluateProduct(workProduct),
+        loopConfig.iterationTimeoutMs,
+        currentInterruptPromise
+      );
+      if (evalRaced.kind === "interrupt") {
+        evaluationMs = Math.max(0, now() - evaluationStart);
+        const interruptedResult = createResult({
+          iteration, startMs: iterationStart, workProduct,
+          evaluation: emptyEvaluation(), improvements: [],
+          workerExecutionMs, evaluationMs, managerImprovementMs,
+          outcome: "user-interrupted"
+        });
+        results.push(interruptedResult);
+        callbacks.onIterationComplete(interruptedResult);
+        if (evalRaced.request.type === "stop") {
+          loopState.status = "interrupted";
+          await maybeSaveState();
+          return results;
+        }
+        lastFeedback = evalRaced.request.feedback;
+        lastEvaluation = undefined;
+        loopState.lastFeedback = evalRaced.request.feedback;
+        await maybeSaveState();
+        continue;
+      }
+      evaluation = evalRaced.value;
       evaluationMs = Math.max(0, now() - evaluationStart);
 
-      const feedback = await withTimeout(
+      // --- User feedback phase ---
+      currentInterruptPromise = callbacks.waitForInterrupt?.();
+      if (currentInterruptPromise) void currentInterruptPromise.catch(() => undefined);
+      const feedbackRaced = await withTimeoutAndInterrupt(
         callbacks.getUserFeedback(workProduct, evaluation, iteration),
-        loopConfig.iterationTimeoutMs
+        loopConfig.iterationTimeoutMs,
+        currentInterruptPromise
       );
+      if (feedbackRaced.kind === "interrupt") {
+        const interruptedResult = createResult({
+          iteration, startMs: iterationStart, workProduct, evaluation, improvements: [],
+          workerExecutionMs, evaluationMs, managerImprovementMs,
+          outcome: "user-interrupted"
+        });
+        results.push(interruptedResult);
+        callbacks.onIterationComplete(interruptedResult);
+        if (feedbackRaced.request.type === "stop") {
+          loopState.status = "interrupted";
+          await maybeSaveState();
+          return results;
+        }
+        lastFeedback = feedbackRaced.request.feedback;
+        lastEvaluation = evaluation;
+        loopState.lastFeedback = feedbackRaced.request.feedback;
+        await maybeSaveState();
+        continue;
+      }
+      const feedback = feedbackRaced.value;
 
       if (feedback.type === "approved") {
         const result = createResult({
@@ -299,10 +375,37 @@ export async function runPersistenceLoop(
       lastFeedback = feedback.feedback;
       loopState.lastFeedback = feedback.feedback;
 
+      // --- Improvement phase ---
       const managerStart = now();
       const currentConfig = await withTimeout(callbacks.readCurrentConfig(), loopConfig.iterationTimeoutMs);
       const requests = buildImprovementRequests(evaluation, workProduct, currentConfig, feedback.feedback);
-      improvements = await withTimeout(callbacks.executeImprovement(requests), loopConfig.iterationTimeoutMs);
+      currentInterruptPromise = callbacks.waitForInterrupt?.();
+      if (currentInterruptPromise) void currentInterruptPromise.catch(() => undefined);
+      const improveRaced = await withTimeoutAndInterrupt(
+        callbacks.executeImprovement(requests),
+        loopConfig.iterationTimeoutMs,
+        currentInterruptPromise
+      );
+      if (improveRaced.kind === "interrupt") {
+        managerImprovementMs = Math.max(0, now() - managerStart);
+        const interruptedResult = createResult({
+          iteration, startMs: iterationStart, workProduct, evaluation, improvements: [],
+          workerExecutionMs, evaluationMs, managerImprovementMs,
+          outcome: "user-interrupted"
+        });
+        results.push(interruptedResult);
+        callbacks.onIterationComplete(interruptedResult);
+        if (improveRaced.request.type === "stop") {
+          loopState.status = "interrupted";
+          await maybeSaveState();
+          return results;
+        }
+        lastFeedback = improveRaced.request.feedback;
+        loopState.lastFeedback = improveRaced.request.feedback;
+        await maybeSaveState();
+        continue;
+      }
+      improvements = improveRaced.value;
       managerImprovementMs = Math.max(0, now() - managerStart);
 
       const outcome: IterationResult["outcome"] = iteration === loopConfig.maxIterations ? "max-iterations" : "improvement-applied";

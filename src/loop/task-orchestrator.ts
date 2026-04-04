@@ -13,7 +13,7 @@ import {
   type WorkUnitResult
 } from "./work-unit.js";
 import type { AuditLogger } from "./manager-audit-log.js";
-import type { LoopCallbacks, IterationResult } from "./persistence-loop.js";
+import type { LoopCallbacks, IterationResult, InterruptRequest } from "./persistence-loop.js";
 import { runPersistenceLoop } from "./persistence-loop.js";
 
 // ---------------------------------------------------------------------------
@@ -87,6 +87,7 @@ export interface DecomposedLoopOptions {
   /** When set, WorkUnit completion state is persisted to {logsDir}/loop-state.json.
    *  This allows the orchestrator to resume mid-session without restarting from Unit 1. */
   logsDir?: string;
+  waitForInterrupt?: () => Promise<InterruptRequest>;
   decomposeTaskFn?: typeof decomposeTask;
   synthesizeResultsFn?: typeof synthesizeResults;
   runPersistenceLoopFn?: typeof runPersistenceLoop;
@@ -145,6 +146,19 @@ async function persistUnitCompletion(
   await writeLoopState(stateFilePath, state);
 }
 
+async function raceOrResolve<T>(
+  promise: Promise<T>,
+  waitForInterrupt: (() => Promise<InterruptRequest>) | undefined
+): Promise<{ kind: "value"; value: T } | { kind: "interrupt" }> {
+  if (!waitForInterrupt) return { kind: "value", value: await promise };
+  const interruptP = waitForInterrupt();
+  void interruptP.catch(() => undefined);
+  return Promise.race([
+    promise.then((v) => ({ kind: "value" as const, value: v })),
+    interruptP.then(() => ({ kind: "interrupt" as const }))
+  ]);
+}
+
 export async function runDecomposedLoop(options: DecomposedLoopOptions): Promise<DecomposedLoopResult> {
   const startMs = Date.now();
   const runLoop = options.runPersistenceLoopFn ?? runPersistenceLoop;
@@ -171,7 +185,11 @@ export async function runDecomposedLoop(options: DecomposedLoopOptions): Promise
       );
     } else {
       // Different task or no state → fresh decomposition
-      initialUnits = await decompose(options.managerAgent, options.task);
+      const decomposeRaced = await raceOrResolve(decompose(options.managerAgent, options.task), options.waitForInterrupt);
+      if (decomposeRaced.kind === "interrupt") {
+        return { synthesizedWorkProduct: "", workUnitResults: [], totalDurationMs: Math.max(0, Date.now() - startMs), wasSingleUnit: false };
+      }
+      initialUnits = decomposeRaced.value;
       const plan = createDecompositionPlan(options.task, initialUnits);
       await options.auditLogger?.logDecomposition(plan);
       const newState: LoopStateFile = {
@@ -187,7 +205,11 @@ export async function runDecomposedLoop(options: DecomposedLoopOptions): Promise
       savedState = newState;
     }
   } else {
-    initialUnits = await decompose(options.managerAgent, options.task);
+    const decomposeRaced2 = await raceOrResolve(decompose(options.managerAgent, options.task), options.waitForInterrupt);
+    if (decomposeRaced2.kind === "interrupt") {
+      return { synthesizedWorkProduct: "", workUnitResults: [], totalDurationMs: Math.max(0, Date.now() - startMs), wasSingleUnit: false };
+    }
+    initialUnits = decomposeRaced2.value;
     const plan = createDecompositionPlan(options.task, initialUnits);
     await options.auditLogger?.logDecomposition(plan);
   }
@@ -294,7 +316,11 @@ export async function runDecomposedLoop(options: DecomposedLoopOptions): Promise
 
       if (canRetry && canResplitByDepth) {
         unit.retryCount += 1;
-        const subUnits = await decompose(options.managerAgent, unit.goal);
+        const resplitRaced = await raceOrResolve(decompose(options.managerAgent, unit.goal), options.waitForInterrupt);
+        if (resplitRaced.kind === "interrupt") {
+          return { synthesizedWorkProduct: completed[completed.length - 1]?.findings ?? "", workUnitResults: completed, totalDurationMs: Math.max(0, Date.now() - startMs), wasSingleUnit: false };
+        }
+        const subUnits = resplitRaced.value;
         const childSpecs = subUnits.map((child) => ({
           goal: child.goal,
           scope: child.scope,
@@ -342,7 +368,12 @@ export async function runDecomposedLoop(options: DecomposedLoopOptions): Promise
   }
 
   const synthesisStart = Date.now();
-  const synthesizedWorkProduct = await synthesize(options.managerAgent, options.task, completed);
+  const synthesizeRaced = await raceOrResolve(synthesize(options.managerAgent, options.task, completed), options.waitForInterrupt);
+  if (synthesizeRaced.kind === "interrupt") {
+    if (stateFilePath) await deleteLoopState(stateFilePath);
+    return { synthesizedWorkProduct: completed[completed.length - 1]?.findings ?? "", workUnitResults: completed, totalDurationMs: Math.max(0, Date.now() - startMs), wasSingleUnit: false };
+  }
+  const synthesizedWorkProduct = synthesizeRaced.value;
   const synthesisDuration = Math.max(0, Date.now() - synthesisStart);
   await options.auditLogger?.logSynthesis(completed.length, averageScore(qualityScores), synthesisDuration);
 

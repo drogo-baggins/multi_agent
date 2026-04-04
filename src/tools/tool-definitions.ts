@@ -282,7 +282,7 @@ function createStartResearchLoopToolDefinition(
               ctx.ui.setWorkingMessage(`Research loop Iter ${iteration}/${max}: Worker running`);
             },
             onEvaluationStart(iteration, max) {
-              ctx.ui.setStatus(STATUS_KEY, `Iter ${iteration}/${max} — Manager evaluating...`);
+              ctx.ui.setStatus(STATUS_KEY, `Iter ${iteration}/${max} — Manager evaluating...  [Ctrl+X] Interrupt`);
               ctx.ui.setWorkingMessage(`Research loop Iter ${iteration}/${max}: Manager evaluating`);
             },
             onFeedbackWaiting(iteration, max, score) {
@@ -293,7 +293,7 @@ function createStartResearchLoopToolDefinition(
               ctx.ui.setWorkingMessage();
             },
             onImprovementStart(iteration, max) {
-              ctx.ui.setStatus(STATUS_KEY, `Iter ${iteration}/${max} — Manager improving...`);
+              ctx.ui.setStatus(STATUS_KEY, `Iter ${iteration}/${max} — Manager improving...  [Ctrl+X] Interrupt`);
               ctx.ui.setWorkingMessage(`Research loop Iter ${iteration}/${max}: Manager improving`);
             },
             onLoopComplete(totalIterations, finalScore) {
@@ -345,7 +345,8 @@ function createStartResearchLoopToolDefinition(
           notify: ui.notify,
           maxIterationsPerUnit: maxIterations,
           iterationTimeoutMs: 600_000,
-          logsDir
+          logsDir,
+          ...(ctx.hasUI ? { waitForInterrupt: () => resetInterruptChannel() } : {})
         });
 
         const summary = [

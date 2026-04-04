@@ -306,7 +306,7 @@ describe("runPersistenceLoop", () => {
 
     const results = await runPersistenceLoop("task", callbacks, { iterationTimeoutMs: 1_000, maxIterations: 2 });
 
-    assert.equal(interruptCalls, 1);
+    assert.equal(interruptCalls, 3); // worker + evaluation + feedback phases each request a channel
     assert.equal(results.length, 1);
     assert.equal(results[0]?.outcome, "user-approved");
     assert.equal(results[0]?.workProduct, "fast-work");
