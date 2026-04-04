@@ -1,5 +1,6 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readFile } from "node:fs/promises";
 
 import {
   createAgentSession,
@@ -64,6 +65,32 @@ async function main(): Promise<void> {
 
   const customTools = createCustomToolDefinitions({ registry, workerConfigDir, logsDir });
 
+  // Detect aborted session via the most recent audit log (system-written, always created by
+  // start_research_loop). If the most recent log lacks "## Synthesis Complete" it was aborted.
+  const logsDir2 = join(projectRoot, "workspace", "logs");
+  let initialMessage: string | undefined;
+  try {
+    const { readdir } = await import("node:fs/promises");
+    const logFiles = (await readdir(logsDir2))
+      .filter((f) => f.startsWith("manager-audit-") && f.endsWith(".md"))
+      .sort();                                      // lexicographic = chronological (ISO timestamp)
+    const latestLog = logFiles[logFiles.length - 1];
+    if (latestLog) {
+      const logContent = await readFile(join(logsDir2, latestLog), "utf-8");
+      const isComplete = logContent.includes("## Synthesis Complete");
+      if (!isComplete) {
+        const taskMatch = logContent.match(/^\*\*Task\*\*:\s*(.+)$/m);
+        const task = taskMatch?.[1]?.trim();
+        if (task) {
+          initialMessage =
+            `${task}（前回の作業が中断されています。output/ 配下に前回の進捗があります。前回の続きから作業してください）`;
+        }
+      }
+    }
+  } catch {
+    // No logs dir or no logs — normal startup
+  }
+
   const resourceLoader = new DefaultResourceLoader({
     cwd: projectRoot,
     systemPrompt: proxySystemPromptPath
@@ -79,7 +106,7 @@ async function main(): Promise<void> {
 
   session = result.session;
 
-  const mode = new InteractiveMode(session, { modelFallbackMessage: result.modelFallbackMessage });
+  const mode = new InteractiveMode(session, { modelFallbackMessage: result.modelFallbackMessage, initialMessage });
   await mode.run();
 }
 

@@ -2,6 +2,7 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
 import { extractContent } from "../search/index.js";
+import { urlCache } from "./url-cache.js";
 
 const MAX_CONTENT_CHARS = 30000;
 
@@ -18,6 +19,14 @@ export function createWebFetchTool(): AgentTool<typeof WebFetchParametersSchema>
     description: "Fetches a web page and extracts its content as readable markdown.",
     parameters: WebFetchParametersSchema,
     async execute(_toolCallId: string, params: WebFetchParameters, _signal?: AbortSignal) {
+      const cached = urlCache.get(params.url);
+      if (cached) {
+        return {
+          content: [{ type: "text", text: `[このURLは既にアクセス済みです — キャッシュを返します]\n\n${cached.formattedContent}` }],
+          details: { url: params.url, title: cached.title, cached: true }
+        };
+      }
+
       try {
         const extracted = await extractContent(params.url);
 
@@ -34,6 +43,8 @@ export function createWebFetchTool(): AgentTool<typeof WebFetchParametersSchema>
           : extracted.content;
         const title = extracted.title || "Untitled";
         const formattedContent = `# ${title}\nSource: ${params.url}\n\n${body}`;
+
+        urlCache.set(params.url, { formattedContent, title });
 
         return {
           content: [{ type: "text", text: formattedContent }],

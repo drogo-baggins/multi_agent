@@ -14,10 +14,11 @@ export interface CdpCaptureResult {
   skipped: boolean;
 }
 
-async function waitForUserEnter(prompt: string): Promise<void> {
+async function waitForUserEnter(prompt: string): Promise<boolean> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   try {
-    await rl.question(prompt);
+    const answer = await rl.question(prompt);
+    return answer.trim().toLowerCase() === "skip";
   } finally {
     rl.close();
   }
@@ -48,15 +49,30 @@ export async function capturePageWithCdp(
   await getOrCreateBrowser();
   const page = await navigateTo(targetUrl, "domcontentloaded");
 
+  const urlDisplay = targetUrl.length > 70
+    ? targetUrl.slice(0, 67) + "..."
+    : targetUrl;
+
   process.stdout.write(`\n`);
-  process.stdout.write(`┌─────────────────────────────────────────────────────────┐\n`);
-  process.stdout.write(`│  [human mode] ブラウザでページを確認してください          │\n`);
-  process.stdout.write(`│  ${targetUrl.slice(0, 55).padEnd(55)}  │\n`);
-  process.stdout.write(`│                                                         │\n`);
-  process.stdout.write(`│  >>> ページが表示されたら ENTER を押してください <<<      │\n`);
-  process.stdout.write(`└─────────────────────────────────────────────────────────┘\n`);
-  process.stdout.write(`\n`);
-  await waitForUserEnter("");
+  process.stdout.write(`╔══════════════════════════════════════════════════════════════════╗\n`);
+  process.stdout.write(`║  【Human Mode】 あなたの操作が必要です                           ║\n`);
+  process.stdout.write(`╠══════════════════════════════════════════════════════════════════╣\n`);
+  process.stdout.write(`║  Chrome ブラウザで以下のページを自動で開いています:              ║\n`);
+  process.stdout.write(`║  ${urlDisplay.padEnd(66)}  ║\n`);
+  process.stdout.write(`║                                                                  ║\n`);
+  process.stdout.write(`║  ページが表示されたら、このターミナルに戻って                    ║\n`);
+  process.stdout.write(`║                                                                  ║\n`);
+  process.stdout.write(`║         >> ENTER キーを押してください <<                         ║\n`);
+  process.stdout.write(`║                                                                  ║\n`);
+  process.stdout.write(`║  ※ページをスキップする場合は "SKIP" と入力して ENTER            ║\n`);
+  process.stdout.write(`╚══════════════════════════════════════════════════════════════════╝\n`);
+  process.stdout.write(`\n> `);
+  const skipped = await waitForUserEnter("");
+
+  if (skipped) {
+    process.stdout.write(`[human mode] スキップしました: ${targetUrl}\n`);
+    return { html: "", url: targetUrl, title: "", skipped: true };
+  }
 
   await waitForCaptureReady(page, waitUntil);
 

@@ -1,0 +1,82 @@
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
+import { join } from 'path';
+const OUTPUT='workspace/output';const BUILD='workspace/output/combined_build';
+mkdirSync(BUILD,{recursive:true});
+function read(name){const p=join(OUTPUT,name);if(!existsSync(p)){console.warn('[WARN] not found: '+p);return '';}return readFileSync(p,'utf8');}
+function shiftHeadings(text,shift){return text.replace(/^(#{1,6})(\s)/gm,function(_,h,sp){return '#'.repeat(Math.min(h.length+shift,6))+sp;});}
+function stripFM(text){return text.replace(/^---\n[\s\S]*?\n---\n/,'');}
+function wrap(id,label,fn,note,text){const s=stripFM(text.trim());const sh=shiftHeadings(s,2);const n=note?'\n> **注記**: '+note+'\n':'';const a=id.toLowerCase().replace(/[^a-z0-9]/g,'-');return '\n<!-- '+id+': '+label+' -->\n\n<a id="'+a+'"></a>\n'+n+'\n'+sh+'\n\n';}
+function ph(num,title,sub){return '\n---\n\n<a id="part'+num+'"></a>\n\n## 第'+num+'部 '+title+'\n\n> '+sub+'\n\n';}
+function sh(label,title){return '\n### '+label+' '+title+'\n\n';}
+function extractSection(t,heading){const s=t.indexOf('## '+heading+'\n');if(s===-1)return '';const a=t.indexOf('\n## ',s+3);const raw=a===-1?t.slice(s):t.slice(s,a);return raw.replace(/^## [^\n]+\n/,'').trim();}
+const idx=read('INDEX-revised.md');const sum=read('SUMMARY.md');
+const execSum=extractSection(idx,'エグゼクティブサマリー');
+const readPaths=extractSection(idx,'推奨読書順');
+const dupSec=extractSection(idx,'重複・補完関係の整理');
+const xlsSec=extractSection(idx,'補足Excelファイル一覧（全25本）');
+const limSec=extractSection(idx,'調査の制限事項');
+const today=new Date().toISOString().slice(0,10);
+const parts=[];
+parts.push('---\ntitle: "AIコーディングエージェント カスタマイズ・制御技術 総合調査レポート（Manuscript 結合版）"\nauthor: "Worker Agent 調査チーム"\ndate: "'+today+'"\n---\n\n');
+parts.push('# AIコーディングエージェント カスタマイズ・制御技術 総合調査レポート\n## Manuscript — 結合版\n\n');
+parts.push('> **文書種別**: 研究論文品質 結合原稿  \n> **作成日**: '+today+'  \n> **総レポート数**: 24本（report-*.md）  \n\n---\n\n');
+parts.push('## 第0部 エグゼクティブサマリーと構造図\n\n');
+parts.push('### 0.1 エグゼクティブサマリー\n\n'+execSum+'\n\n');
+parts.push('### 0.2 調査テーマ全体関係図\n\n![fig1](../../../output/svg/fig1-theme-relations.svg)\n\n');
+parts.push('### 0.3 3レイヤー制御モデル\n\n![fig2](../../../output/svg/fig2-3layer-model.svg)\n\n');
+parts.push('### 0.4 セキュリティ3大リスク\n\n![fig3](../../../output/svg/fig3-security.svg)\n\n');
+parts.push(ph(1,'MDファイルハーネス仕様（静的コンテキスト制御）','Layer 1: 各ツールが起動時に自動読み込みするMarkdownファイルを通じてエージェントの振る舞いを静的に規定する層'));
+parts.push(sh('1.1','カテゴリA：MDハーネス横断仕様（ツール横断）'));
+parts.push(wrap('A-1','MDファイルハーネス最終版','report-md-harness-final.md','推奨入口・最終版',read('report-md-harness-final.md')));
+parts.push(wrap('A-2','エージェント/システムMD横断比較','report-md-harness-agentsystem.md','',read('report-md-harness-agentsystem.md')));
+parts.push(wrap('A-3','MDハーネス初期詳細調査','report-md-harness.md','参考・前版（初期詳細調査）',read('report-md-harness.md')));
+parts.push(sh('1.2','カテゴリB：AGENTS.md オープン標準'));
+parts.push(wrap('B-1','AGENTS.md 完全仕様','report-agents-md-full-spec.md','',read('report-agents-md-full-spec.md')));
+parts.push(sh('1.3','カテゴリC：CLAUDE.md（Anthropic Claude Code）'));
+parts.push(wrap('C-1','CLAUDE.md 完全仕様','report-claude-md-full-spec.md','',read('report-claude-md-full-spec.md')));
+parts.push(wrap('C-2','CLAUDE.md × AGENTS.md 比較','report-claude-codex-md.md','',read('report-claude-codex-md.md')));
+parts.push(sh('1.4','カテゴリF：Cursor と Cline のルールファイル'));
+parts.push(wrap('F-1','Cursor / Cline ルールファイル仕様','report-cursor-cline-rules.md','',read('report-cursor-cline-rules.md')));
+parts.push(ph(2,'Hooks・ランタイム制御（動的イベント駆動制御）','Layer 2: ツール実行前後・応答生成前後などライフサイクルの各所にロジックを差し込む動的介入の層'));
+parts.push(sh('2.1','カテゴリD：Claude Code Hooks と OpenAI Codex Rules'));
+parts.push(wrap('D-1','Claude Code Hooks × Codex Rules 完全仕様','report-claudecode-hooks-codex-rules.md','',read('report-claudecode-hooks-codex-rules.md')));
+parts.push(sh('2.2','カテゴリI：Hooks・ランタイム制御・マルチエージェントプロトコル'));
+parts.push(wrap('I-1','Hooks / MCP / A2A ランタイム制御（推奨・最新版）','report-hooks-a2a-runtime-control.md','推奨入口・MCP/A2A対応最新版',read('report-hooks-a2a-runtime-control.md')));
+parts.push(wrap('I-2','OpenAI Agents SDK オーケストレーター','report-openai-agents-orchestrator.md','',read('report-openai-agents-orchestrator.md')));
+parts.push(wrap('I-3','Hooks ランタイム制御横断比較','report-hooks-runtime-control.md','参考・前版（フレームワーク横断概要）',read('report-hooks-runtime-control.md')));
+parts.push(ph(3,'オーケストレーターによる動的MD生成（プログラマティック制御）','Layer 3: 上位エージェントが実行時にサブエージェント用設定ファイルを生成・書き換えるパターン'));
+parts.push(sh('3.1','カテゴリH：オーケストレーターによる動的MD制御'));
+parts.push(wrap('H-1','動的MD制御 最新詳細版（推奨・最大規模）','report-orchestrator-dynamic-md.md','推奨入口・最大規模・最新版',read('report-orchestrator-dynamic-md.md')));
+parts.push(wrap('H-2','オーケストレーターMDパターン詳解','report-orchestrator-md.md','',read('report-orchestrator-md.md')));
+parts.push(wrap('H-3','動的MD制御概要','report-dynamic-md-control.md','参考・前版（概要版）',read('report-dynamic-md-control.md')));
+parts.push(ph(4,'GitHub Copilot エコシステム','Enterprise Layer: GitHub Copilot の拡張機構・指示ファイル・IDE連携・Coding Agent・Extensions/MCP の全体像'));
+parts.push(sh('4.1','カテゴリE：GitHub Copilot 全体像'));
+parts.push(wrap('E-1','Copilot ハーネス拡張機構 全体像（推奨入口）','report-copilot-harness.md','推奨入口',read('report-copilot-harness.md')));
+parts.push(wrap('E-2','Copilot 指示ファイル・Hooks 仕様','report-copilot-instructions-agents.md','',read('report-copilot-instructions-agents.md')));
+parts.push(wrap('E-3','IDE Agent Mode 動作仕様','report-copilot-agent-mode-ide.md','',read('report-copilot-agent-mode-ide.md')));
+parts.push(wrap('E-4','Copilot Coding Agent アーキテクチャ','report-copilot-coding-agent.md','',read('report-copilot-coding-agent.md')));
+parts.push(wrap('E-5','Coding Agent セキュリティ・PR自動化','report-copilot-coding-agent-pr.md','',read('report-copilot-coding-agent-pr.md')));
+parts.push(wrap('E-6','Extensions・MCP・組織ポリシー','report-copilot-extensions-mcp-policy.md','',read('report-copilot-extensions-mcp-policy.md')));
+parts.push(ph(5,'Aider・opencode・OSS ツール','OSS Layer: opencode / Aider などのオープンソースコーディングエージェントのアーキテクチャとハーネス設計'));
+parts.push(sh('5.1','カテゴリG：opencode / Aider'));
+parts.push('> **注記（G-1 除外）**: カテゴリG-1（report.md）は本 manuscript から除外した。内容が J-1 と完全同一のため、第6部（J-1）を正規参照先とする。\n\n');
+parts.push(wrap('G-2','opencode アーキテクチャ詳細','report-opencode.md','',read('report-opencode.md')));
+parts.push(wrap('G-3','opencode エージェントハーネス詳細','report-opencode-harness.md','最大規模・OSS最詳細調査',read('report-opencode-harness.md')));
+parts.push(ph(6,'コンテクストロット防止','Quality Layer: 長時間・多段階タスクにおける Context Rot の防止アーキテクチャ'));
+parts.push(sh('6.1','カテゴリJ：Context Rot 防止アーキテクチャ'));
+parts.push(wrap('J-1','Context Rot 防止 統合最終版（正規参照先）','report-context-rot-impl.md','正規参照先（report.md と同一内容）',read('report-context-rot-impl.md')));
+const sumShifted=shiftHeadings(stripFM(sum.trim()),2);
+parts.push('\n---\n\n<a id="appendix-a"></a>\n\n## 付録A：ハーネス設計 実務向け設計指針\n\n> 出典: SUMMARY.md\n\n'+sumShifted+'\n\n');
+parts.push('---\n\n<a id="appendix-b"></a>\n\n## 付録B：補足Excelファイル一覧（全25本）\n\n> PDF変換済みは workspace/output/combined_build/xlsx_pdf/ に格納。\n\n'+xlsSec+'\n\n');
+parts.push('---\n\n<a id="appendix-c"></a>\n\n## 付録C：推奨読書順パス（6パス）\n\n'+readPaths+'\n\n');
+parts.push('---\n\n<a id="appendix-d"></a>\n\n## 付録D：重複・補完関係の整理\n\n'+dupSec+'\n\n');
+parts.push('---\n\n<a id="appendix-e"></a>\n\n## 付録E：調査の制限事項\n\n'+limSec+'\n\n');
+parts.push('---\n\n*Manuscript 生成日: '+today+'*  \n*結合対象: 24レポート + SUMMARY.md*  \n*保存先: workspace/output/combined_build/manuscript.md*\n');
+const ms=parts.join('');
+const outPath=join(BUILD,'manuscript.md');
+writeFileSync(outPath,ms,'utf8');
+const lines=ms.split('\n').length;const bytes=Buffer.byteLength(ms,'utf8');
+console.log('manuscript.md generated');
+console.log('Lines : '+lines.toLocaleString());
+console.log('Size  : '+(bytes/1024/1024).toFixed(2)+' MB');
+console.log('Path  : '+outPath);

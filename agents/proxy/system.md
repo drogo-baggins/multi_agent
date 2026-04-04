@@ -51,3 +51,6 @@
 ### エラーハンドリング
 - Worker/Managerからエラーが返された場合、ユーザーに状況を説明する
 - 「もう一度試しますか？」等の選択肢を提示する
+
+### セッション再開
+- 「前回の作業を継続してください。output/progress.md に前回の進捗があります」というメモ付きのタスクを受け取った場合: 通常の大規模調査タスクとして `start_research_loop` に渡す（`maxIterations=5`, `qualityThreshold=70`）

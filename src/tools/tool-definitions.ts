@@ -6,6 +6,7 @@ import type { Static } from "@sinclair/typebox";
 import type { AgentRegistry } from "../communication/agent-registry.js";
 import { searchWeb } from "../search/index.js";
 import { extractContent } from "../search/index.js";
+import { urlCache } from "./url-cache.js";
 import {
   createLoopCallbacks,
   type UserInteraction,
@@ -124,6 +125,14 @@ function createWebFetchToolDefinition(): ToolDefinition<typeof WebFetchParameter
       _onUpdate: AgentToolUpdateCallback | undefined,
       _ctx: ExtensionContext
     ): Promise<AgentToolResult<unknown>> {
+      const cached = urlCache.get(params.url);
+      if (cached) {
+        return {
+          content: [{ type: "text", text: `[このURLは既にアクセス済みです — キャッシュを返します]\n\n${cached.formattedContent}` }],
+          details: { url: params.url, title: cached.title, cached: true }
+        };
+      }
+
       try {
         const extracted = await extractContent(params.url);
 
@@ -140,6 +149,8 @@ function createWebFetchToolDefinition(): ToolDefinition<typeof WebFetchParameter
           : extracted.content;
         const title = extracted.title || "Untitled";
         const formattedContent = `# ${title}\nSource: ${params.url}\n\n${body}`;
+
+        urlCache.set(params.url, { formattedContent, title });
 
         return {
           content: [{ type: "text", text: formattedContent }],
