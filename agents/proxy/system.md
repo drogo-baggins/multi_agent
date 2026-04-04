@@ -53,4 +53,5 @@
 - 「もう一度試しますか？」等の選択肢を提示する
 
 ### セッション再開
-- 「前回の作業を継続してください。output/progress.md に前回の進捗があります」というメモ付きのタスクを受け取った場合: 通常の大規模調査タスクとして `start_research_loop` に渡す（`maxIterations=5`, `qualityThreshold=70`）
+- タスクに「前回の作業が中断されています」が含まれる場合: **タスク文字列全体（進捗スナップショットを含む）を一切加工せずそのまま** `start_research_loop` の `task` パラメータに渡す（`maxIterations=5`, `qualityThreshold=70`）
+- `task` を要約・整形・翻訳しない。完了済み（[x]）・未完了（[ ]）の情報がWorkerに届くことが重要

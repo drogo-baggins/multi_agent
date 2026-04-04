@@ -82,8 +82,30 @@ async function main(): Promise<void> {
         const taskMatch = logContent.match(/^\*\*Task\*\*:\s*(.+)$/m);
         const task = taskMatch?.[1]?.trim();
         if (task) {
-          initialMessage =
-            `${task}（前回の作業が中断されています。output/ 配下に前回の進捗があります。前回の続きから作業してください）`;
+          // Read progress.md to embed concrete completion state in the resume message.
+          // Extract only サブタスク一覧 + 現在の状態 (first occurrence = top-level task).
+          let progressSnapshot = "";
+          try {
+            const progressPath = join(projectRoot, "workspace", "output", "progress.md");
+            const progressContent = await readFile(progressPath, "utf-8");
+            const snapshotParts: string[] = [];
+            const subtaskMatch = progressContent.match(/## サブタスク一覧\n([\s\S]*?)(?=\n## |\n---)/);
+            const stateMatch = progressContent.match(/## 現在の状態\n([\s\S]*?)(?=\n## |\n---)/);
+            if (subtaskMatch) snapshotParts.push(`## サブタスク一覧\n${subtaskMatch[1].trim()}`);
+            if (stateMatch) snapshotParts.push(`## 現在の状態\n${stateMatch[1].trim()}`);
+            progressSnapshot = snapshotParts.join("\n\n");
+          } catch {
+            // No progress.md yet — use generic resume message
+          }
+
+          if (progressSnapshot) {
+            initialMessage =
+              `${task}\n\n前回の作業が中断されています。前回の進捗は以下の通りです:\n\n${progressSnapshot}\n\n` +
+              `完了済み（[x]）のサブタスクはスキップし、未完了（[ ]）のサブタスクから作業を再開してください。`;
+          } else {
+            initialMessage =
+              `${task}（前回の作業が中断されています。output/ 配下に前回の進捗があります。前回の続きから作業してください）`;
+          }
         }
       }
     }

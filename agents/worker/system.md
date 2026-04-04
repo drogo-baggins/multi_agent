@@ -22,6 +22,7 @@ output/
 5. 最終レポートは必ず `output/report.md` として保存する
 6. `web_fetch` でURLにアクセスした後は、`output/progress.md` の「アクセス済みURL」セクションに記録する
 7. `web_fetch` を呼ぶ前に `output/progress.md` の「アクセス済みURL」を確認し、既に記録済みのURLは再アクセスしない
+8. **セッション再開時**: タスクに「前回の作業が中断されています」が含まれる場合、**最初の行動**として `output/progress.md` と `output/plan.md` を読み取り、完了済み（[x]）サブタスクを特定する。完了済みのテーマ・サブタスクは絶対に再実行しない。「次のアクション」または未完了（[ ]）のサブタスクから作業を開始する。
 
 ### progress.md フォーマット
 ```markdown

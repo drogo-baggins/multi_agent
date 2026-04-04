@@ -131,12 +131,27 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
       const workerAgent = await options.registry.get("worker");
       workerAgent.reset();
 
+      const RESUME_MARKER = "前回の作業が中断されています";
+      const isResume = task.includes(RESUME_MARKER);
+
       let prompt = task;
-      if (context.iteration > 1) {
-        const parts = [
-          `これはイテレーション${context.iteration}です。output/ ディレクトリに前回の作業結果があります。`,
-          "まず output/progress.md を読み取り、前回の進捗を確認してから作業を継続してください。"
-        ];
+      if (context.iteration > 1 || isResume) {
+        const parts: string[] = [];
+
+        if (isResume && context.iteration === 1) {
+          parts.push(
+            "⚠️ これは中断されたセッションの再開です。以下の手順を厳守してください:",
+            "1. 最初の行動として output/progress.md を読み取り、完了済みサブタスク（[x]）を特定する",
+            "2. 完了済みのサブタスク・テーマは絶対に再実行しない（ゼロから計画し直さない）",
+            "3. 「次のアクション」または未完了（[ ]）のサブタスクから作業を開始する",
+            "4. output/ ディレクトリ全体を確認し、既存の成果物（subtask-*.md 等）を活用する"
+          );
+        } else {
+          parts.push(
+            `これはイテレーション${context.iteration}です。output/ ディレクトリに前回の作業結果があります。`,
+            "まず output/progress.md を読み取り、前回の進捗を確認してから作業を継続してください。"
+          );
+        }
 
         if (context.previousEvaluation) {
           parts.push(`\n前回の評価スコア: ${context.previousEvaluation.qualityScore}/100`);
