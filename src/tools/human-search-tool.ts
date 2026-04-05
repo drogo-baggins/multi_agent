@@ -30,7 +30,7 @@ export function createHumanSearchTool(): AgentTool<typeof HumanSearchParametersS
       "Searches the web. Opens a browser with the query pre-filled; " +
       "the human presses the search button, then the result page is captured automatically.",
     parameters: HumanSearchParametersSchema,
-    async execute(_toolCallId: string, params: HumanSearchParameters, _signal?: AbortSignal) {
+    async execute(_toolCallId: string, params: HumanSearchParameters, signal?: AbortSignal) {
       const searchUrl = buildSearchUrl(params.query);
 
       process.stdout.write(`\n`);
@@ -40,7 +40,8 @@ export function createHumanSearchTool(): AgentTool<typeof HumanSearchParametersS
       process.stdout.write(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
 
       const result = await capturePageWithCdp(searchUrl, {
-        waitUntil: "domcontentloaded"
+        waitUntil: "domcontentloaded",
+        signal
       });
 
       if (result.skipped || result.html === "") {

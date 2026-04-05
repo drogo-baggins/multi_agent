@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, it, mock } from "node:test";
 
 import type { Agent } from "@mariozechner/pi-agent-core";
@@ -127,6 +130,51 @@ describe("runDecomposedLoop", () => {
     assert.equal(synthesize.mock.calls.length, 1);
     assert.equal(result.synthesizedWorkProduct, "SYNTH:3");
     assert.equal(result.wasSingleUnit, false);
+  });
+
+  it("single-unit passthrough reports WorkUnit start and completion details", async () => {
+    const unit = createWorkUnit({ goal: "Single unit", scope: "A" });
+    const runLoop = mock.fn(async () => [createIterationResult({ workProduct: "single-product", qualityScore: 92, totalMs: 345 })]);
+    const notifications: string[] = [];
+    const onWorkUnitStart = mock.fn(() => {});
+    const onWorkUnitComplete = mock.fn(() => {});
+
+    const result = await runDecomposedLoop({
+      task: "Original Task",
+      managerAgent: {} as Agent,
+      callbacks: createCallbacks(),
+      decomposeTaskFn: async () => [unit],
+      runPersistenceLoopFn: runLoop,
+      synthesizeResultsFn: async () => "should-not-be-used",
+      notify: (message: string) => {
+        notifications.push(message);
+      },
+      statusReporter: {
+        onWorkerStart: () => {},
+        onEvaluationStart: () => {},
+        onFeedbackWaiting: () => {},
+        onImprovementStart: () => {},
+        onLoopComplete: () => {},
+        onLoopInterrupted: () => {},
+        onWorkUnitStart,
+        onWorkUnitComplete
+      }
+    });
+
+    assert.equal(onWorkUnitStart.mock.calls.length, 1);
+    assert.equal(onWorkUnitStart.mock.calls[0]?.arguments[0], 1);
+    assert.equal(onWorkUnitStart.mock.calls[0]?.arguments[1], 1);
+    assert.equal(onWorkUnitStart.mock.calls[0]?.arguments[2], "Single unit");
+
+    assert.equal(onWorkUnitComplete.mock.calls.length, 1);
+    assert.equal(onWorkUnitComplete.mock.calls[0]?.arguments[0], 1);
+    assert.equal(onWorkUnitComplete.mock.calls[0]?.arguments[1], 1);
+    assert.equal(onWorkUnitComplete.mock.calls[0]?.arguments[2], "Single unit");
+    assert.equal(onWorkUnitComplete.mock.calls[0]?.arguments[3], 92);
+    assert.equal(onWorkUnitComplete.mock.calls[0]?.arguments[4], `output/wu-${unit.id}-findings.md`);
+
+    assert.equal(notifications.some((message) => message.includes("[1/1] Single unit 完了") && message.includes("92/100") && message.includes("345ms") && message.includes(`output/wu-${unit.id}-findings.md`)), true);
+    assert.equal(result.wasSingleUnit, true);
   });
 
   it("timeout triggers resplit and adds children to backlog", async () => {
@@ -272,6 +320,33 @@ describe("runDecomposedLoop", () => {
     assert.equal(notifications.some((n) => n.includes("[1/2]") && n.includes("完了")), true);
     assert.equal(notifications.some((n) => n.includes("[2/2]") && n.includes("開始")), true);
     assert.equal(notifications.some((n) => n.includes("[2/2]") && n.includes("完了")), true);
+  });
+
+  it("formats task-plan metadata with nested indentation for single-unit execution", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "pi-agent-task-plan-"));
+    const logsDir = join(tempRoot, "workspace", "logs");
+    const taskPlanPath = join(tempRoot, "workspace", "task-plan.md");
+    await mkdir(logsDir, { recursive: true });
+
+    try {
+      await runDecomposedLoop({
+        task: "Main",
+        managerAgent: {} as Agent,
+        callbacks: createCallbacks(),
+        logsDir,
+        taskPlanPath,
+        decomposeTaskFn: async () => [createWorkUnit({ goal: "Single unit", scope: "Scope" })],
+        runPersistenceLoopFn: async () => [createIterationResult({ workProduct: "final product", qualityScore: 91 })],
+        synthesizeResultsFn: async () => "final product"
+      });
+
+      const content = await readFile(taskPlanPath, "utf-8");
+      assert.match(content, /- DONE \[L1-001\] Single unit/);
+      assert.match(content, /  - 品質スコア: 91\/100/);
+      assert.match(content, /  - findingsFile: output\/wu-/);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("multiple sequential query-manager interrupts during decompose do not stop the loop", async () => {

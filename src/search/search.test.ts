@@ -424,8 +424,8 @@ describe("loadSearchConfig – SEARCH_MODE", () => {
     }
   });
 
-  it("defaults to auto when SEARCH_MODE is unset", () => {
-    assert.equal(loadSearchConfig().mode, "auto");
+  it("defaults to human when SEARCH_MODE is unset", () => {
+    assert.equal(loadSearchConfig().mode, "human");
   });
 
   it("returns human when SEARCH_MODE=human", () => {
@@ -433,8 +433,13 @@ describe("loadSearchConfig – SEARCH_MODE", () => {
     assert.equal(loadSearchConfig().mode, "human");
   });
 
-  it("defaults to auto for unknown SEARCH_MODE value", () => {
-    process.env.SEARCH_MODE = "invalid";
+  it("returns auto when SEARCH_MODE=auto", () => {
+    process.env.SEARCH_MODE = "auto";
     assert.equal(loadSearchConfig().mode, "auto");
+  });
+
+  it("falls back to human for unknown SEARCH_MODE value", () => {
+    process.env.SEARCH_MODE = "invalid";
+    assert.equal(loadSearchConfig().mode, "human");
   });
 });

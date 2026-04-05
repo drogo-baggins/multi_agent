@@ -29,7 +29,7 @@ export function createHumanFetchTool(): AgentTool<typeof HumanFetchParametersSch
       "Fetches a web page. Opens the URL in a browser for human interaction " +
       "(login, CAPTCHA, etc.), then captures the page DOM automatically.",
     parameters: HumanFetchParametersSchema,
-    async execute(_toolCallId: string, params: HumanFetchParameters, _signal?: AbortSignal) {
+    async execute(_toolCallId: string, params: HumanFetchParameters, signal?: AbortSignal) {
       process.stdout.write(`\n`);
       process.stdout.write(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
       process.stdout.write(`[human mode] 取得URL: ${params.url}\n`);
@@ -37,7 +37,8 @@ export function createHumanFetchTool(): AgentTool<typeof HumanFetchParametersSch
       process.stdout.write(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
 
       const result = await capturePageWithCdp(params.url, {
-        waitUntil: "networkidle"
+        waitUntil: "networkidle",
+        signal
       });
 
       if (result.skipped || result.html === "") {

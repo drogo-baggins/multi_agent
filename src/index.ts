@@ -25,6 +25,7 @@ const workerConfigDir = join(projectRoot, "agents", "worker");
 const managerConfigDir = join(projectRoot, "agents", "manager");
 const proxySystemPromptPath = join(projectRoot, "agents", "proxy", "system.md");
 const sandboxDir = join(projectRoot, "workspace");
+const taskPlanPath = join(sandboxDir, "task-plan.md");
 const logsDir = join(projectRoot, "workspace", "logs");
 
 async function main(): Promise<void> {
@@ -58,12 +59,14 @@ async function main(): Promise<void> {
       configDir: managerConfigDir,
       workerConfigDir,
       sandboxDir,
+      taskPlanPath,
+      logsDir,
       model: resolveAgentModel("manager", session.model, session.modelRegistry),
       getApiKey
     });
   });
 
-  const customTools = createCustomToolDefinitions({ registry, workerConfigDir, logsDir });
+  const customTools = createCustomToolDefinitions({ registry, workerConfigDir, sandboxDir, taskPlanPath, logsDir });
 
   // Detect aborted session via the most recent audit log (system-written, always created by
   // start_research_loop). If the most recent log lacks "## Synthesis Complete" it was aborted.

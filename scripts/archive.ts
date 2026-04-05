@@ -1,5 +1,6 @@
 #!/usr/bin/env tsx
 import { cp, mkdir, readFile, writeFile, access } from "node:fs/promises";
+import { createInterface } from "node:readline/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,6 +13,17 @@ function parseName(args: string[]): string {
     return args[idx + 1].trim();
   }
   return "";
+}
+
+async function readTaskPlanName(workspaceDir: string): Promise<string | null> {
+  const filePath = join(workspaceDir, "task-plan.md");
+  try {
+    const raw = await readFile(filePath, "utf-8");
+    const match = raw.match(/^\*\*タスク\*\*:\s*(.+)$/m);
+    return match?.[1]?.trim() ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function formatTimestamp(date: Date): string {
@@ -59,6 +71,31 @@ function extractFinalScore(state: LoopState): number | undefined {
   return state.results[state.results.length - 1]?.evaluation?.qualityScore;
 }
 
+async function suggestArchiveName(workspaceDir: string): Promise<string> {
+  const taskPlanName = await readTaskPlanName(workspaceDir);
+  const loopState = await readLoopState(workspaceDir);
+  const candidate = taskPlanName ?? loopState?.task ?? "";
+  return candidate.trim().slice(0, 20);
+}
+
+async function promptForName(suggestedName: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const promptName = suggestedName || "(名前なし)";
+    const answer = await rl.question(`提案名: "${promptName}"\nこのまま使用しますか？ [Y/n/別名入力]: `);
+    const normalized = answer.trim();
+    if (normalized === "" || normalized.toLowerCase() === "y") {
+      return suggestedName;
+    }
+    if (normalized.toLowerCase() === "n") {
+      return "";
+    }
+    return normalized;
+  } finally {
+    rl.close();
+  }
+}
+
 interface ArchiveMeta {
   name: string;
   archivedAt: string;
@@ -81,7 +118,8 @@ function buildMeta(name: string, now: Date, loopState: LoopState | null): Archiv
 }
 
 async function main(): Promise<void> {
-  const name = parseName(process.argv.slice(2));
+  const requestedName = parseName(process.argv.slice(2));
+  const name = requestedName || await promptForName(await suggestArchiveName(join(ROOT, "workspace")));
   const now = new Date();
   const archiveDirName = buildArchiveDirName(formatTimestamp(now), name);
   const archiveRoot = join(ROOT, "archives", archiveDirName);

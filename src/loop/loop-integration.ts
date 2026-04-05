@@ -1,3 +1,6 @@
+import { join } from "node:path";
+import { readFile } from "node:fs/promises";
+
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 
 import type { AgentRegistry } from "../communication/agent-registry.js";
@@ -6,6 +9,7 @@ import { loadAgentConfig } from "../config/config-loader.js";
 import { formatEvaluationReport, parseEvaluationReport } from "./evaluation-report.js";
 import { formatImprovementRequest, type ImprovementRequest } from "./improvement-request.js";
 import { createAuditLogger, type AuditLogger } from "./manager-audit-log.js";
+import { detectStagnation } from "./stagnation-detector.js";
 import type { IterationResult, LoopCallbacks, UserFeedback, WorkerContext } from "./persistence-loop.js";
 import type { InterruptRequest } from "./persistence-loop.js";
 
@@ -22,11 +26,15 @@ export interface LoopStatusReporter {
   onImprovementStart(iteration: number, maxIterations: number): void;
   onLoopComplete(totalIterations: number, finalScore: number): void;
   onLoopInterrupted(iteration: number): void;
+  onWorkUnitStart?(unitIndex: number, totalUnits: number, unitGoal: string): void;
+  onWorkUnitComplete?(unitIndex: number, totalUnits: number, unitGoal: string, qualityScore: number, findingsFile?: string): void;
 }
 
 export interface LoopIntegrationOptions {
   registry: AgentRegistry;
   workerConfigDir: string;
+  workerSandboxDir?: string;
+  taskPlanPath?: string;
   ui: UserInteraction;
   logsDir?: string;
   task?: string;
@@ -41,11 +49,24 @@ export interface LoopIntegrationOptions {
 interface LoopIntegrationDependencies {
   invokeAgent: typeof invokeAgent;
   loadAgentConfig: typeof loadAgentConfig;
+  readReportFile: (sandboxDir: string) => Promise<string>;
+}
+
+const MIN_REPORT_CHARS = 200;
+
+async function readReportFile(sandboxDir: string): Promise<string> {
+  try {
+    const content = await readFile(join(sandboxDir, "output", "report.md"), "utf8");
+    return content.trim();
+  } catch {
+    return "";
+  }
 }
 
 export const loopIntegrationDependencies: LoopIntegrationDependencies = {
   invokeAgent,
-  loadAgentConfig
+  loadAgentConfig,
+  readReportFile
 };
 
 const evaluationPromptHeader = [
@@ -100,10 +121,55 @@ function parseImprovementResponse(text: string): string[] {
   return lines.length > 0 ? lines : [text.trim()].filter((line) => line.length > 0);
 }
 
+function buildWorkerPromptContext(task: string, context: WorkerContext): string | null {
+  const RESUME_MARKER = "前回の作業が中断されています";
+  const isResume = task.includes(RESUME_MARKER);
+
+  if (context.iteration === 1 && !isResume) {
+    return null;
+  }
+
+  const parts: string[] = [];
+
+  if (context.iteration === 1 && isResume) {
+    parts.push(
+      "⚠️ これは中断されたセッションの再開です。以下の手順を厳守してください:",
+      "1. 最初の行動として output/progress.md を読み取り、完了済みサブタスク（[x]）を特定する",
+      "2. 完了済みのサブタスク・テーマは絶対に再実行しない（ゼロから計画し直さない）",
+      "3. 「次のアクション」または未完了（[ ]）のサブタスクから作業を開始する",
+      "4. output/ ディレクトリ全体を確認し、既存の成果物（subtask-*.md 等）を活用する"
+    );
+  } else if (context.iteration > 1) {
+    parts.push(
+      `これはイテレーション${context.iteration}です。output/ ディレクトリに前回の作業結果があります。`,
+      "まず output/progress.md を読み取り、前回の進捗を確認してから作業を継続してください。"
+    );
+  }
+
+  if (context.previousEvaluation) {
+    parts.push(`\n前回の評価スコア: ${context.previousEvaluation.qualityScore}/100`);
+    parts.push(`前回の評価要約: ${context.previousEvaluation.summary}`);
+    if (context.previousEvaluation.issues.length > 0) {
+      const issueList = context.previousEvaluation.issues
+        .map((issue) => `- [${issue.category}] ${issue.description}`)
+        .join("\n");
+      parts.push(`\n改善すべき課題:\n${issueList}`);
+    }
+  }
+
+  if (context.previousFeedback) {
+    parts.push(`\nユーザーからのフィードバック: ${context.previousFeedback}`);
+  }
+
+  return parts.join("\n");
+}
+
 export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallbacks {
   const { ui } = options;
   let currentIteration = 1;
   let pendingUserFeedback: string | undefined;
+  const results: IterationResult[] = [];
+  let consecutiveInvalidWorkProducts = 0;
 
   let auditLogger: AuditLogger | null = null;
   let auditLoggerInitPromise: Promise<AuditLogger> | null = null;
@@ -126,53 +192,72 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
   }
 
   return {
+    onQueryManager: async (question: string): Promise<string> => {
+      let taskPlanContent = "";
+      if (options.taskPlanPath) {
+        try {
+          taskPlanContent = await readFile(options.taskPlanPath, "utf-8");
+        } catch {
+          taskPlanContent = "";
+        }
+      }
+
+      const prompt = [
+        "[現在のタスク計画]",
+        taskPlanContent,
+        "",
+        "[ユーザーの質問]",
+        question
+      ].join("\n");
+
+      const managerAgent = await options.registry.get("manager");
+      const response = await loopIntegrationDependencies.invokeAgent(managerAgent, prompt);
+      const text = extractTextOrThrow(response);
+      ui.notify(text);
+      return text;
+    },
+
     executeWorker: async (task: string, context: WorkerContext): Promise<string> => {
       options.statusReporter?.onWorkerStart(context.iteration, options.maxIterations ?? 10);
       const workerAgent = await options.registry.get("worker");
       workerAgent.reset();
 
-      const RESUME_MARKER = "前回の作業が中断されています";
-      const isResume = task.includes(RESUME_MARKER);
-
       let prompt = task;
-      if (context.iteration > 1 || isResume) {
-        const parts: string[] = [];
-
-        if (isResume && context.iteration === 1) {
-          parts.push(
-            "⚠️ これは中断されたセッションの再開です。以下の手順を厳守してください:",
-            "1. 最初の行動として output/progress.md を読み取り、完了済みサブタスク（[x]）を特定する",
-            "2. 完了済みのサブタスク・テーマは絶対に再実行しない（ゼロから計画し直さない）",
-            "3. 「次のアクション」または未完了（[ ]）のサブタスクから作業を開始する",
-            "4. output/ ディレクトリ全体を確認し、既存の成果物（subtask-*.md 等）を活用する"
-          );
-        } else {
-          parts.push(
-            `これはイテレーション${context.iteration}です。output/ ディレクトリに前回の作業結果があります。`,
-            "まず output/progress.md を読み取り、前回の進捗を確認してから作業を継続してください。"
-          );
-        }
-
-        if (context.previousEvaluation) {
-          parts.push(`\n前回の評価スコア: ${context.previousEvaluation.qualityScore}/100`);
-          parts.push(`前回の評価要約: ${context.previousEvaluation.summary}`);
-          if (context.previousEvaluation.issues.length > 0) {
-            const issueList = context.previousEvaluation.issues
-              .map((issue) => `- [${issue.category}] ${issue.description}`)
-              .join("\n");
-            parts.push(`\n改善すべき課題:\n${issueList}`);
-          }
-        }
-
-        if (context.previousFeedback) {
-          parts.push(`\nユーザーからのフィードバック: ${context.previousFeedback}`);
-        }
-
-        prompt = `${task}\n\n---\n${parts.join("\n")}`;
+      const workerPromptContext = buildWorkerPromptContext(task, context);
+      if (workerPromptContext) {
+        prompt = `${task}\n\n---\n${workerPromptContext}`;
       }
 
       const response = await loopIntegrationDependencies.invokeAgent(workerAgent, prompt);
-      return extractTextOrThrow(response);
+      const agentText = extractTextOrThrow(response);
+
+      if (!options.workerSandboxDir) {
+        return agentText.length >= MIN_REPORT_CHARS ? agentText : "";
+      }
+
+      const reportContent = await loopIntegrationDependencies.readReportFile(options.workerSandboxDir);
+      if (reportContent.length >= MIN_REPORT_CHARS) {
+        return reportContent;
+      }
+
+      const retryPrompt = "output/report.md が見つかりません。今すぐ output/report.md を作成してください。宣言だけでなく、実際にファイルを書き込んでください。";
+      const retryResponse = await loopIntegrationDependencies.invokeAgent(workerAgent, retryPrompt);
+      const retryAgentText = extractTextOrThrow(retryResponse);
+
+      const retryReport = await loopIntegrationDependencies.readReportFile(options.workerSandboxDir);
+      if (retryReport.length >= MIN_REPORT_CHARS) {
+        return retryReport;
+      }
+
+      if (agentText.length >= MIN_REPORT_CHARS) {
+        return agentText;
+      }
+
+      if (retryAgentText.length >= MIN_REPORT_CHARS) {
+        return retryAgentText;
+      }
+
+      return "";
     },
 
     evaluateProduct: async (workProduct: string, signal?: AbortSignal) => {
@@ -256,7 +341,13 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
     readCurrentConfig: async (): Promise<string> => loopIntegrationDependencies.loadAgentConfig(options.workerConfigDir),
 
     onIterationComplete: (result: IterationResult): void => {
+      results.push(result);
       options.onIterationReport?.(formatIterationReport(result));
+
+      const isInvalidWorkProduct = result.workProduct.length < MIN_REPORT_CHARS;
+      consecutiveInvalidWorkProducts = isInvalidWorkProduct ? consecutiveInvalidWorkProducts + 1 : 0;
+
+      const stagnationResult = detectStagnation(results);
 
       if (result.outcome === "user-approved" || result.outcome === "max-iterations" || result.outcome === "timeout") {
         options.statusReporter?.onLoopComplete(result.iteration, result.evaluation.qualityScore);
@@ -264,6 +355,14 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
         options.statusReporter?.onLoopInterrupted(result.iteration);
       } else if (result.outcome === "improvement-applied") {
         currentIteration = result.iteration + 1;
+      }
+
+      if (stagnationResult.isStagnant && !isInvalidWorkProduct) {
+        ui.notify(stagnationResult.recommendation);
+      }
+
+      if (consecutiveInvalidWorkProducts >= 2 && isInvalidWorkProduct) {
+        ui.notify(`⚠️ 成果物が連続して空です（${consecutiveInvalidWorkProducts}回）。ループを停止することを検討してください。`);
       }
 
       void getAuditLogger().then((logger) => logger?.logIteration(result));

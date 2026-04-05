@@ -48,12 +48,13 @@ describe("manager agent factory", () => {
     const configDir = join(tempRoot, "manager-config-tools");
     const workerConfigDir = join(tempRoot, "worker-config-tools");
     const sandboxDir = join(tempRoot, "workspace-tools");
+    const logsDir = join(tempRoot, "logs-tools");
     await mkdir(configDir, { recursive: true });
     await mkdir(workerConfigDir, { recursive: true });
     await mkdir(sandboxDir, { recursive: true });
     await writeFile(join(configDir, "system.md"), "manager-system");
 
-    const agent = await createManagerAgent({ configDir, workerConfigDir, sandboxDir, model: testModel });
+    const agent = await createManagerAgent({ configDir, workerConfigDir, sandboxDir, logsDir, model: testModel });
     const toolNames = new Set(agent.state.tools.map((tool) => tool.name));
 
     assert.equal(toolNames.has("read_worker_config"), true);
@@ -61,5 +62,7 @@ describe("manager agent factory", () => {
     assert.equal(toolNames.has("update_worker_config"), true);
     assert.equal(toolNames.has("evaluate_work_product"), true);
     assert.equal(toolNames.has("read_changelog"), true);
+    assert.equal(toolNames.has("read_task_plan"), true);
+    assert.equal(toolNames.has("update_task_plan"), true);
   });
 });

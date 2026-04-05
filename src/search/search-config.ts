@@ -17,7 +17,7 @@ export interface SearchConfig {
 
 /** Loads search config from environment variables. */
 export function loadSearchConfig(): SearchConfig {
-  const mode: SearchMode = process.env.SEARCH_MODE === "human" ? "human" : "auto";
+  const mode: SearchMode = process.env.SEARCH_MODE === "auto" ? "auto" : "human";
   const raw = process.env.SEARCH_FALLBACK_PROVIDERS ?? "";
   const fallbackProviders = raw
     .split(",")

@@ -5,6 +5,7 @@ import { getOrCreateBrowser, navigateTo, closeDedicatedTab } from "./cdp-session
 
 export interface CdpCaptureOptions {
   waitUntil?: "load" | "domcontentloaded" | "networkidle";
+  signal?: AbortSignal;
 }
 
 export interface CdpCaptureResult {
@@ -14,12 +15,40 @@ export interface CdpCaptureResult {
   skipped: boolean;
 }
 
-async function waitForUserEnter(prompt: string): Promise<boolean> {
+async function waitForUserEnter(prompt: string, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) {
+    return true;
+  }
+
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  let onAbort: (() => void) | undefined;
   try {
-    const answer = await rl.question(prompt);
+    const questionPromise = rl.question(prompt);
+    if (!signal) {
+      const answer = await questionPromise;
+      return answer.trim().toLowerCase() === "skip";
+    }
+
+    const abortPromise = new Promise<boolean>((resolve) => {
+      onAbort = () => {
+        signal.removeEventListener("abort", onAbort!);
+        rl.close();
+        resolve(true);
+      };
+
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+
+    const answer = await Promise.race([questionPromise, abortPromise]);
+    if (typeof answer !== "string") {
+      return true;
+    }
+
     return answer.trim().toLowerCase() === "skip";
   } finally {
+    if (signal && onAbort) {
+      signal.removeEventListener("abort", onAbort);
+    }
     rl.close();
   }
 }
@@ -46,6 +75,10 @@ export async function capturePageWithCdp(
 ): Promise<CdpCaptureResult> {
   const waitUntil = options.waitUntil ?? "networkidle";
 
+  if (options.signal?.aborted) {
+    return { html: "", url: targetUrl, title: "", skipped: true };
+  }
+
   await getOrCreateBrowser();
   const page = await navigateTo(targetUrl, "domcontentloaded");
 
@@ -67,7 +100,7 @@ export async function capturePageWithCdp(
   process.stdout.write(`║  ※ページをスキップする場合は "SKIP" と入力して ENTER            ║\n`);
   process.stdout.write(`╚══════════════════════════════════════════════════════════════════╝\n`);
   process.stdout.write(`\n> `);
-  const skipped = await waitForUserEnter("");
+  const skipped = await waitForUserEnter("", options.signal);
 
   if (skipped) {
     process.stdout.write(`[human mode] スキップしました: ${targetUrl}\n`);

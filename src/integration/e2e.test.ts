@@ -23,7 +23,7 @@ const getApiKey = (provider: string): string | undefined => process.env[`${provi
 
 const AskUserSchema = Type.Object({ question: Type.String() });
 
-function createStubAskUserTool(): AgentTool<typeof AskUserSchema> {
+function createStubAskUserTool(): AgentTool<any> {
   return {
     name: "ask_user",
     label: "Ask User",
@@ -78,6 +78,7 @@ async function createRegistry(options: {
       configDir: options.managerConfigDir,
       workerConfigDir: options.workerConfigDir,
       sandboxDir: options.sandboxDir,
+      taskPlanPath: join(options.sandboxDir, "task-plan.md"),
       model: testModel,
       streamFn: streamSimple,
       getApiKey
@@ -87,14 +88,14 @@ async function createRegistry(options: {
   return registry;
 }
 
-async function createProxyForTest(configDir: string, registry: AgentRegistry, workerConfigDir: string): Promise<Agent> {
+async function createProxyForTest(configDir: string, registry: AgentRegistry, workerConfigDir: string, sandboxDir: string): Promise<Agent> {
   const systemPrompt = await loadAgentConfig(configDir);
   const agent = new Agent({
     initialState: { systemPrompt, model: testModel },
     streamFn: streamSimple,
     getApiKey
   });
-  const customTools = createCustomToolDefinitions({ registry, workerConfigDir });
+  const customTools = createCustomToolDefinitions({ registry, workerConfigDir, sandboxDir, taskPlanPath: join(sandboxDir, "task-plan.md") });
   agent.setTools(customTools as any);
   return agent;
 }
@@ -142,7 +143,7 @@ describe("E2E integration tests", { skip: !API_KEY ? SKIP_REASON : undefined }, 
     });
 
     const registry = await createRegistry({ workerConfigDir, managerConfigDir, sandboxDir });
-    const proxy = await createProxyForTest(proxyConfigDir, registry, workerConfigDir);
+    const proxy = await createProxyForTest(proxyConfigDir, registry, workerConfigDir, sandboxDir);
 
     const toolStarts: string[] = [];
     const unsubscribe = proxy.subscribe((event: AgentEvent) => {
@@ -196,7 +197,7 @@ describe("E2E integration tests", { skip: !API_KEY ? SKIP_REASON : undefined }, 
     });
 
     const registry = await createRegistry({ workerConfigDir, managerConfigDir, sandboxDir });
-    const proxy = await createProxyForTest(proxyConfigDir, registry, workerConfigDir);
+    const proxy = await createProxyForTest(proxyConfigDir, registry, workerConfigDir, sandboxDir);
 
     const toolStarts: string[] = [];
     const unsubscribe = proxy.subscribe((event: AgentEvent) => {
@@ -248,7 +249,7 @@ describe("E2E integration tests", { skip: !API_KEY ? SKIP_REASON : undefined }, 
     });
 
     const registry = await createRegistry({ workerConfigDir, managerConfigDir, sandboxDir });
-    const proxy = await createProxyForTest(proxyConfigDir, registry, workerConfigDir);
+    const proxy = await createProxyForTest(proxyConfigDir, registry, workerConfigDir, sandboxDir);
 
     let proxyText = "";
     try {

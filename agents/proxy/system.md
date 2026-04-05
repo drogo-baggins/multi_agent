@@ -48,6 +48,14 @@
 - 「さっきの調査に追加して」→ `start_research_loop`（追加調査として、`maxIterations=5`）
 - 「さっきの結果を改善して」→ `start_research_loop`（改善依頼として、`qualityThreshold=70`）
 
+### 過去の調査を追加調査したいとき
+- 「〜の続きを調べて」「〜の調査を再開して」「〜についてもっと詳しく（過去の調査を踏まえて）」等のリクエストを認識する
+- `archives/` 配下のディレクトリ名・`meta.json` の `name` / `task` フィールドを参照して対象アーカイブを特定する
+- 特定したアーカイブの `output/report.md` を `workspace/output/report.md` に復元してから `start_research_loop` を呼ぶ
+- 復元には `bash` ツールを使用する（例: `cp archives/{アーカイブ名}/output/report.md workspace/output/report.md`）
+- 対象アーカイブが特定できない場合は `ask_user` で候補を提示する（`npm run list-archives` の出力内容をユーザーに案内する）
+- パラメータ: `qualityThreshold=70`, `maxIterations=5`
+
 ### エラーハンドリング
 - Worker/Managerからエラーが返された場合、ユーザーに状況を説明する
 - 「もう一度試しますか？」等の選択肢を提示する

@@ -256,6 +256,57 @@ searchMode !== "human"（デフォルト "auto"）
 
 `src/index.ts` が起動時に `loadSearchConfig()` を呼び出し、`SEARCH_MODE` 環境変数を読み取って `searchMode` を Worker Registry ファクトリに注入する。
 
+## タスク構造管理（task-plan.md）
+
+`workspace/task-plan.md` は、`runDecomposedLoop()` が `decomposeTask()` を完了した直後に生成するタスク構造と進捗の管理ファイルである。L1〜L3 の階層、WorkUnit の進捗、品質スコア、成果物ファイル名、タイムスタンプを LOGSEQ スタイルで記録する。
+
+### 成果物レベル定義
+
+| レベル | 書籍形態 | 論文形態 | 調査レポート | 対応単位 |
+|---|---|---|---|---|
+| L1 | 部 | 章 | 大テーマ | WorkUnitグループ |
+| L2 | 章 | 節 | サブテーマ | WorkUnit（実行単位） |
+| L3 | 節 | 項 | トピック | ワーカーのサブトピック |
+| L4 | 項 | 段落群 | 個別事実 | ワーカーの内部記録 |
+
+### `task-plan.md` のフォーマット例
+
+```markdown
+# タスク計画
+
+**タスク**: 生成AI市場調査
+**作成日時**: 2026-04-05T12:00:00.000Z
+**ステータス**: running
+
+## 成果物構造
+- TODO [L1-001] 市場動向の全体像
+  - スコープ: 主要プレイヤー、成長率、用途
+  - DOING [L2-001] 主要プレイヤーの整理
+    - スコープ: 企業・製品・提供形態
+    - DONE [L3-001] 公式情報の収集
+      - 品質スコア: 90/100
+      - findingsFile: output/wu-L3-001-findings.md
+      - 開始時刻: 2026-04-05T12:10:00.000Z
+      - 完了時刻: 2026-04-05T12:18:00.000Z
+
+## ユーザー指示履歴
+- なし
+
+## 合成完了
+- 完了時刻: 2026-04-05T13:00:00.000Z
+- WorkUnit数: 1
+```
+
+### 自動更新タイミング
+
+- WorkUnit 開始時に `DOING` に更新する
+- WorkUnit 完了時に `DONE` に更新し、`qualityScore`、`findingsFile`、`completedAt` を追記する
+- 合成完了時に `## 合成完了` セクションを追記する
+
+### マネージャーへの質問時の挙動
+
+`createLoopCallbacks()` の `onQueryManager` コールバックは、`task-plan.md` の内容を質問コンテキストとして自動付与する。これにより、マネージャーは現在の L1〜L3 構造と進捗を参照したうえで回答できる。
+
 ### 専用タブ管理（`cdp-session.ts`）
 
 タブの乱立を防ぐため、`cdp-session.ts` はタイトルが `"pi-agent-dedicated"` のタブを Singleton として管理する。

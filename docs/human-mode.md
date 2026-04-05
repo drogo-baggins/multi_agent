@@ -1,104 +1,92 @@
-# Human Mode ガイド（SEARCH_MODE=human）
+# Human Mode ガイド
 
-Human Mode は、エージェントのWeb取得処理を自動ヘッドレスブラウザではなく、ユーザーが操作する実際のChrome ブラウザ経由で行うモードです。JavaScriptレンダリング・CAPTCHA・ログイン壁など、ヘッドレスブラウザでアクセスできないページの取得に使用します。
+## Human Mode とは
 
-## 仕組み
+Human Mode は、エージェントがあなたの Chrome ブラウザを使って調査する仕組みです。ページを開く場所や調べる順番はエージェントが決めます。あなたはページを確認して、問題なければ ENTER を押すだけです。
 
-```mermaid
-sequenceDiagram
-    participant W as Worker Agent
-    participant T as HumanSearchTool / HumanFetchTool
-    participant C as cdp-session.ts
-    participant B as Chrome (CDP)
-    participant U as ユーザー
+この役割分担のおかげで、難しい調査でも人が毎回手作業で検索し直す必要がありません。エージェントが調査先を選び、あなたは「今見えているページで進めてよいか」を確認するだけで済みます。
 
-    W->>T: web_search("query") or web_fetch("url")
-    T->>C: capturePageWithCdp(searchUrl | targetUrl)
-    C->>B: Playwright CDP 接続 (port 9222)
-    B->>U: 専用タブで URL を開く
-    C->>U: ターミナルに確認ボックスを表示
-    Note over U: ページを確認（ログイン・CAPTCHA等）
-    U->>C: Enter キーを押す（またはSKIPと入力）
-    C->>B: page.content() で DOM 取得
-    B-->>C: HTML
-    C-->>T: CdpCaptureResult
-    T->>T: extractContentFromHtml() → Markdown
-    T-->>W: テキストコンテンツ
-```
+Human Mode は、たとえば次のような場面で役立ちます。
 
-## セットアップ
+- 社内ネットワークで外部検索サービスが使えないとき
+- CAPTCHA が出て自動取得できないとき
+- ログインが必要なページを調べたいとき
 
-### 前提条件
+## はじめる前に確認すること
 
-Chrome（または Chromium）がインストールされていること。CDP リモートデバッグを有効にして起動する必要があります。
+### Node.js の確認
 
-| OS | 推奨インストール先 |
-|---|---|
-| Windows | `C:\Program Files\Google\Chrome\Application\chrome.exe` |
-| macOS | `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` |
-| Linux | `/usr/bin/google-chrome` または `/usr/bin/chromium-browser` |
-
-### Chrome の起動
-
-`ensureChromeReady()` が Chrome の未起動を検出した場合、自動でプロセスを起動します。手動で起動する場合は以下のオプションが必要です。
+まず Node.js が入っているか確認します。
 
 ```bash
-# Windows (例)
-chrome.exe --remote-debugging-port=9222 --no-first-run --no-default-browser-check
-
-# macOS
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
-  --remote-debugging-port=9222 --no-first-run --no-default-browser-check
+node --version
 ```
 
-### セットアップ確認
+期待される出力の例:
 
-以下のコマンドで Chrome の検出・起動・CDP 接続をまとめて確認できます。
+```text
+v18.20.5
+```
+
+`v18` 以上が出れば十分です。
+
+### Chrome の確認
+
+Human Mode では Chrome を使います。インストールされているか確認してください。
+
+Windows の例:
+
+```powershell
+Get-Command chrome
+```
+
+macOS の例:
+
+```bash
+ls "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+```
+
+Windows では通常 `C:\Program Files\Google\Chrome\Application\chrome.exe`、macOS では `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` にあります。
+
+### セットアップ確認（npm run chrome-setup）
+
+次のコマンドで、Chrome の起動確認と接続確認をまとめて行えます。
 
 ```bash
 npm run chrome-setup
 ```
 
-成功すると以下のように表示されます:
+成功時の出力例:
 
-```
+```text
 === Human Mode セットアップ確認 ===
 
 ✓ Chrome: C:\Program Files\Google\Chrome\Application\chrome.exe
-✓ プロファイルディレクトリ: C:\Users\...\AppData\Local\Temp\pi-agent-chrome-profile
-
-CDP ポート 9222 への接続を確認しています...
-✓ CDP 接続 OK: ws://127.0.0.1:9222/devtools/browser/...
-
+✓ プロファイルディレクトリ: ...
+✓ CDP 接続 OK: ws://127.0.0.1:9222/...
 ✓ Human Mode の準備ができました。
 ```
 
-Chrome が見つからない場合は `CHROME_PATH` 環境変数でパスを指定してください。
+失敗時の出力例:
 
-### 有効化
-
-`.env` ファイルに以下を追加します。
-
-```bash
-SEARCH_MODE=human
+```text
+✗ Chrome が見つかりません: ...
+  環境変数 CHROME_PATH に Chrome のパスを設定してください。
 ```
 
-## 環境変数
+Chrome が見つからない場合は、後半のトラブルシューティングを参照してください。
 
-| 変数名 | デフォルト | 説明 |
-|---|---|---|
-| `SEARCH_MODE` | `auto` | `human` に設定するとHuman Modeが有効になる |
-| `HUMAN_SEARCH_ENGINE` | `https://www.google.com/search?q=` | 検索に使用する公開検索エンジン（例: `https://duckduckgo.com/?q=`） |
-| `CHROME_WINDOW_POSITION` | （なし） | Chrome ウィンドウの初期位置 `X,Y`（例: `0,0`） |
-| `CHROME_WINDOW_SIZE` | （なし） | Chrome ウィンドウの初期サイズ `W,H`（例: `1280,900`） |
+## 実際の操作の流れ
 
-`CHROME_WINDOW_POSITION` と `CHROME_WINDOW_SIZE` はマルチモニター環境でウィンドウを特定の画面に配置したい場合に有効です。
+### 1. エージェントを起動して調査を依頼する
 
-## 操作フロー
+まず通常どおりエージェントを起動し、自然な日本語で調査を依頼します。
 
-エージェントが `web_search` または `web_fetch` を呼び出すと、Chrome の専用タブ (`pi-agent-dedicated`) でURLが開きます。ターミナルに以下のような確認ボックスが表示されます。
+### 2. 確認ボックスが表示されたら
 
-```
+調査先のページが開くと、ターミナルに次の確認ボックスが表示されます。
+
+```text
 ╔══════════════════════════════════════════════════════════════════╗
 ║  【Human Mode】 あなたの操作が必要です                           ║
 ╠══════════════════════════════════════════════════════════════════╣
@@ -115,59 +103,221 @@ SEARCH_MODE=human
 >
 ```
 
-ページを確認し、必要であればログインや CAPTCHA 解除などの操作を行った後、以下のいずれかの操作をします。
+### 3. ページを確認して ENTER を押す
 
-| 操作 | 動作 |
+ページが表示されたら、内容を確認して次のどれかを選びます。
+
+- 普通のページなら、そのまま ENTER を押します
+- ログインが必要なページなら、ログインしてから ENTER を押します
+- CAPTCHA が出たページなら、解除してから ENTER を押します
+- スキップしたいページなら、`SKIP` と入力して ENTER を押します
+
+### 4. これを繰り返す
+
+エージェントは必要なページを順番に開きます。あなたは毎回、表示されたページを見て ENTER を押すだけです。
+
+### 5. 調査が完了したら
+
+調査が終わると、`workspace/output/report.md` や関連ファイルが作られます。必要なら `workspace/task-plan.md` も確認してください。
+
+## Ctrl+X で作業を中断・変更する
+
+ENTER を待っている最中でも、**Ctrl+X** で割り込みダイアログを開けます。いまの調査を止めたい、方針を変えたい、マネージャーに質問したいときに使います。
+
+| 選択肢 | いつ使うか |
 |---|---|
-| **Enter キーを押す** | 現在のページのDOMを取得し、Markdown に変換してエージェントに返す |
-| `SKIP` と入力して Enter | このURLをスキップし、エージェントにスキップを通知する |
+| **Stop and exit loop** | 調査を完全に止めたいとき |
+| **Modify task instructions** | 「もっと〇〇を重視して」と方針を変えたいとき |
+| **Ask manager a question** | 「今どこまで進んでいる？」と確認したいとき（調査は止まらない） |
+| **Resume** | 間違えて Ctrl+X を押したとき |
 
-### SKIP の動作
+`Ask manager a question` を選ぶと、調査を止めずにマネージャーへ質問できます。
 
-- 同一URLへの再取得は最大2回まで試行される
-- 2回ともSKIPまたはエラーの場合、エージェントはそのURLを引用しない
-- 応答待ちにタイムアウトはない（ページ読み込みのタイムアウトは15秒で、超過した場合は現在のDOMをそのまま取得する）
+## 現在の進捗を確認する
 
-## 備考
+調査の構造と進捗は `workspace/task-plan.md` に記録されます。別ターミナルで次のコマンドを実行すると、今どこまで進んでいるかを見られます。
 
-| 項目 | 内容 |
-|---|---|
-| 専用タブ | タブタイトルが `pi-agent-dedicated` のタブを再利用する。毎回新規タブは作成されない |
-| Chrome 再起動 | Chrome を再起動した場合、次のツール呼び出し時に自動で再接続される |
-| 他のタブへの影響 | 専用タブのみ操作する。他のタブは影響を受けない |
-| SearXNG との関係 | Human Mode 時は SearXNG を使用しない。公開検索エンジン（デフォルト: Google）をブラウザで直接開く |
-| プロファイル場所 | `getUserDataDir()` が返すパス（OS別の一時ディレクトリ）を使用 |
+```bash
+cat workspace/task-plan.md
+```
 
-## auto モードとの比較
+また、Ctrl+X → `Ask manager a question` → 「今どこまで進んでいる？」と聞く方法でも確認できます。
 
-| 比較項目 | `auto`（デフォルト） | `human` |
-|---|---|---|
-| ブラウザ操作 | Playwrightヘッドレス自動実行 | ユーザーが操作 |
-| CAPTCHA対応 | 不可 | 可（手動突破） |
-| ログイン壁対応 | 不可 | 可（手動ログイン） |
-| 速度 | 高速（自動） | ユーザー操作待ち |
-| Chrome起動要否 | 不要 | 必要（CDP ポート 9222） |
-| SearXNG 依存 | あり | なし（公開検索エンジンをブラウザで直接開く） |
-| 人間の介在 | なし | 各URL取得ごとに確認が必要 |
+## よくある質問
+
+### Chrome が 2 つ起動してしまった
+
+手動で起動した Chrome と、エージェントが起動した Chrome の両方がある可能性があります。`npm run chrome-setup` を実行して、接続確認だけ先に済ませてください。
+
+### 確認ボックスが出ない
+
+ページの読み込み中や、まだ確認が必要なページに到達していない可能性があります。少し待っても出ない場合は、いったん停止して再実行してください。
+
+### ページが真っ白で何も表示されない
+
+読み込み直後でまだ内容が描画されていないことがあります。ページが完全に表示されるまで待ってから ENTER を押してください。
+
+### ENTER を押したのに何も起きない
+
+入力待ちではなく別のフェーズにいる可能性があります。確認ボックスが表示されている状態で Enter を押してください。
+
+### タブがたくさん開いてしまった
+
+Human Mode は専用タブを再利用します。通常は毎回新しいタブを増やしません。もし大量に開いた場合は、一度止めて再起動してください。
+
+### ログインしたのにまたログイン画面が出る
+
+別のセッションや別プロファイルで開いている可能性があります。Chrome を同じプロファイルで起動し直してから、もう一度試してください。
 
 ## トラブルシューティング
 
 ### Chrome に接続できない
 
-```
+```text
 Error: connect ECONNREFUSED 127.0.0.1:9222
 ```
 
-Chrome が CDP デバッグポート 9222 で起動していないか、ファイアウォールでブロックされています。`ensureChromeReady()` が自動起動を試みますが、失敗した場合は手動で Chrome を CDP オプション付きで起動してください。
+対処手順:
+
+- `npm run chrome-setup` を実行して、起動と接続をまとめて確認します
+- `CHROME_PATH` に Chrome の実行ファイルを設定します
+- Chrome を手動で `--remote-debugging-port=9222` 付きで起動します
+
+### `CHROME_PATH` を設定したい
+
+Windows では PowerShell で次のように設定します。
+
+```powershell
+$env:CHROME_PATH = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+```
+
+macOS では次のように設定します。
+
+```bash
+export CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+```
+
+### Chrome を手動で起動したい
+
+Windows の例:
+
+```powershell
+"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --no-first-run --no-default-browser-check
+```
+
+macOS の例:
+
+```bash
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --remote-debugging-port=9222 --no-first-run --no-default-browser-check
+```
 
 ### ページが正しく取得されない
 
-Enter を押した後に空またはほぼ空のコンテンツが返される場合、ページが JavaScript で遅延レンダリングされている可能性があります。ページが完全に表示されるまで待ってから Enter を押してください。
+Enter を押した後に空またはほぼ空の内容が返る場合は、ページがまだ描画中かもしれません。完全に表示されてから Enter を押してください。
 
-### ログイン・CAPTCHA 操作に時間がかかる
+### ログインや CAPTCHA に時間がかかる
 
-確認プロンプトの応答待ちにタイムアウトはないため、ログインや CAPTCHA 解除に時間をかけても問題ありません。操作が完了したら Enter を押してください。
+Human Mode では待ち時間のタイムアウトを気にしなくて大丈夫です。ログインや CAPTCHA の解除が終わってから Enter を押してください。
 
 ### 専用タブが閉じられた
 
-`pi-agent-dedicated` タブが誤って閉じられた場合、次のツール呼び出し時に自動的に新しいタブが作成されます。
+専用タブが閉じられても、次の取得時に作り直されます。必要なら一度エージェントを止めて再開してください。
+
+## 調査が終わったら
+
+### 成果物を保存して次の調査へ
+
+調査が終わったら、まず成果物を保存します。
+
+```bash
+npm run archive
+```
+
+名前はエージェントが自動で提案してくれます。Y を押すだけで保存できます。保存が終わったら、ワークスペースをリセットして次の調査を始めます。
+
+```bash
+npm run new-project
+npm start
+```
+
+### 過去の調査を一覧で確認したいとき
+
+```bash
+npm run list-archives
+```
+
+日時・調査名・品質スコアが一覧で表示されます。
+
+### 過去の調査の続きをしたいとき
+
+コマンドは不要です。`npm start` で起動して、次のように依頼するだけです。
+
+```text
+「〇〇の調査」の続きで、△△の部分を追加調査してください
+```
+
+エージェントが自動でアーカイブを探して調査を再開します。
+
+## 設定のカスタマイズ（上級者向け）
+
+| 変数名 | デフォルト | 使いどころ |
+|---|---|---|
+| `SEARCH_MODE` | `human` | 自動検索モードを使いたいときだけ `auto` にします |
+| `HUMAN_SEARCH_ENGINE` | `https://www.google.com/search?q=` | Google 以外の検索エンジンを使いたいときに変更します。例: `https://duckduckgo.com/?q=` |
+| `CHROME_WINDOW_POSITION` | （なし） | Chrome を特定のモニターに置きたいときに使います。例: `0,0` |
+| `CHROME_WINDOW_SIZE` | （なし） | Chrome の大きさを固定したいときに使います。例: `1280,900` |
+
+`CHROME_WINDOW_POSITION` と `CHROME_WINDOW_SIZE` は、マルチモニター環境で見やすい位置に Chrome を出したいときに便利です。
+
+## 仕組みの詳細（開発者向け）
+
+このセクションは開発者向けです。
+
+Human Mode では、`web_search` と `web_fetch` が Chrome 上の専用タブを使ってページを開き、確認後に HTML を取得します。取得した内容は Markdown に変換され、Worker に渡されます。
+
+```mermaid
+sequenceDiagram
+    participant W as Worker Agent
+    participant T as HumanSearchTool / HumanFetchTool
+    participant C as cdp-session.ts
+    participant B as Chrome
+    participant U as ユーザー
+
+    W->>T: web_search("query") or web_fetch("url")
+    T->>C: capturePageWithCdp(searchUrl | targetUrl)
+    C->>B: Chrome を専用タブで開く
+    B->>U: ページを表示
+    C->>U: 確認ボックスを表示
+    U->>C: ENTER か SKIP
+    C->>B: page.content() で DOM を取得
+    B-->>C: HTML
+    C-->>T: CdpCaptureResult
+    T->>T: extractContentFromHtml() → Markdown
+    T-->>W: テキストコンテンツ
+```
+
+関連する実装の要点:
+
+- `capturePageWithCdp()` が確認待ちと DOM 取得を担当します
+- `waitForUserEnter()` は `AbortSignal` に対応していて、Ctrl+X の割り込みに反応します
+- `closeDedicatedTab()` により、専用タブは終了時に整理されます
+- Human Mode と auto モードの切り替えは `loadSearchConfig()` の `SEARCH_MODE` で決まります
+
+### 参考となる実際の表示
+
+`capturePageWithCdp()` が出す確認ボックスは次の形式です。
+
+```text
+╔══════════════════════════════════════════════════════════════════╗
+║  【Human Mode】 あなたの操作が必要です                           ║
+╠══════════════════════════════════════════════════════════════════╣
+║  Chrome ブラウザで以下のページを自動で開いています:              ║
+║  https://www.google.com/search?q=...                             ║
+║                                                                  ║
+║  ページが表示されたら、このターミナルに戻って                    ║
+║                                                                  ║
+║         >> ENTER キーを押してください <<                         ║
+║                                                                  ║
+║  ※ページをスキップする場合は "SKIP" と入力して ENTER            ║
+╚══════════════════════════════════════════════════════════════════╝
+```

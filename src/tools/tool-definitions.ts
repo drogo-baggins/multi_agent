@@ -4,7 +4,6 @@ import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
 
 import type { AgentRegistry } from "../communication/agent-registry.js";
-import { invokeAgent } from "../communication/invoke-agent.js";
 import { searchWeb } from "../search/index.js";
 import { extractContent } from "../search/index.js";
 import { urlCache } from "./url-cache.js";
@@ -176,6 +175,8 @@ function createWebFetchToolDefinition(): ToolDefinition<typeof WebFetchParameter
 function createStartResearchLoopToolDefinition(
   registry: AgentRegistry,
   workerConfigDir: string,
+  sandboxDir: string,
+  taskPlanPath: string,
   logsDir?: string
 ): ToolDefinition<typeof StartResearchLoopParametersSchema> {
   return {
@@ -264,15 +265,11 @@ function createStartResearchLoopToolDefinition(
             return;
           }
           if (question && question.trim()) {
-            const managerAgent = await registry.get("manager");
-            const response = await invokeAgent(managerAgent, question.trim());
-            const text = response.content
-              .filter((b): b is { type: "text"; text: string } => b.type === "text" && "text" in b)
-              .map((b) => b.text)
-              .join("");
-            ctx.ui.notify(`マネージャーからの回答:\n${text}`);
+            capturedResolve?.({ type: "query-manager", question: question.trim() });
+            if (resolveInterrupt === capturedResolve) {
+              resolveInterrupt = undefined;
+            }
           }
-          // Do not resolve the interrupt channel — the worker continues unaffected
         }
       }
 
@@ -324,6 +321,14 @@ function createStartResearchLoopToolDefinition(
             onLoopInterrupted(iteration) {
               ctx.ui.setStatus(STATUS_KEY, `Interrupted — at iter ${iteration}`);
               ctx.ui.setWorkingMessage();
+            },
+            onWorkUnitStart(unitIndex, totalUnits, unitGoal) {
+              ctx.ui.setStatus(STATUS_KEY, `[${unitIndex}/${totalUnits}] ${unitGoal} — Worker running...  [Ctrl+X] Interrupt`);
+              ctx.ui.setWorkingMessage(`WorkUnit ${unitIndex}/${totalUnits}: ${unitGoal}`);
+            },
+            onWorkUnitComplete(unitIndex, totalUnits, unitGoal, qualityScore, _findingsFile) {
+              ctx.ui.setStatus(STATUS_KEY, `[${unitIndex}/${totalUnits} DONE] ${unitGoal} (${qualityScore}/100)`);
+              ctx.ui.setWorkingMessage();
             }
           }
         : undefined;
@@ -336,6 +341,7 @@ function createStartResearchLoopToolDefinition(
       const callbacks = createLoopCallbacks({
         registry,
         workerConfigDir,
+        workerSandboxDir: sandboxDir,
         ui,
         logsDir,
         task: params.task,
@@ -343,6 +349,7 @@ function createStartResearchLoopToolDefinition(
         auditLogger,
         maxIterations,
         statusReporter,
+        taskPlanPath,
         ...(ctx.hasUI
           ? {
               waitForInterrupt: () => resetInterruptChannel()
@@ -364,6 +371,8 @@ function createStartResearchLoopToolDefinition(
           maxIterationsPerUnit: maxIterations,
           iterationTimeoutMs: 600_000,
           logsDir,
+          taskPlanPath,
+          statusReporter,
           ...(ctx.hasUI ? { waitForInterrupt: () => resetInterruptChannel() } : {})
         });
 
@@ -425,6 +434,8 @@ function createStartResearchLoopToolDefinition(
 export interface CustomToolsOptions {
   registry: AgentRegistry;
   workerConfigDir: string;
+  sandboxDir: string;
+  taskPlanPath: string;
   logsDir?: string;
 }
 
@@ -433,6 +444,6 @@ export function createCustomToolDefinitions(options: CustomToolsOptions): ToolDe
     createAskUserToolDefinition(),
     createWebSearchToolDefinition(),
     createWebFetchToolDefinition(),
-    createStartResearchLoopToolDefinition(options.registry, options.workerConfigDir, options.logsDir)
+    createStartResearchLoopToolDefinition(options.registry, options.workerConfigDir, options.sandboxDir, options.taskPlanPath, options.logsDir)
   ];
 }

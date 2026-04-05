@@ -294,6 +294,24 @@ APPEND_SYSTEM.mdを更新。バックアップ作成 + changelog追記。
 #### `createReadChangelogTool(workerConfigDir: string): AgentTool`
 changelog.mdの内容を返す。パラメータ: なし。
 
+#### `createReadTaskPlanTool(taskPlanPath: string): AgentTool`
+`task-plan.md` の全内容を返す。ファイルが存在しない場合は「タスク計画はまだ作成されていません。」を返す。パラメータ: なし。
+
+#### `createUpdateTaskPlanTool(taskPlanPath: string): AgentTool`
+WorkUnitまたはL3エントリのステータスを更新する、またはL3エントリを追加する。
+
+パラメータ:
+```typescript
+{
+  operation?: "update-work-unit" | "add-l3" | "update-l3";  // デフォルト: "update-work-unit"
+  workUnitGoal?: string;    // 対象WorkUnitのgoal文字列（update-work-unit / add-l3 時）
+  newStatus: "TODO" | "DOING" | "DONE";
+  l3EntryId?: string;       // L3エントリID（add-l3 / update-l3 時）
+  l3Description?: string;   // 新規L3エントリの説明（add-l3 時）
+  note?: string;            // 補足メモ
+}
+```
+
 ### Worker Tools
 
 #### `createWebSearchTool(): AgentTool`
@@ -375,6 +393,8 @@ export interface LoopStatusReporter {
   onImprovementStart(iteration: number, maxIterations: number): void;
   onLoopComplete(totalIterations: number, finalScore: number): void;
   onLoopInterrupted(iteration: number): void;
+  onWorkUnitStart?(unitIndex: number, totalUnits: number, unitGoal: string): void;
+  onWorkUnitComplete?(unitIndex: number, totalUnits: number, unitGoal: string, qualityScore: number, findingsFile?: string): void;
 }
 ```
 
@@ -388,6 +408,7 @@ export interface LoopStatusReporter {
 interface LoopIntegrationOptions {
   registry: AgentRegistry;
   workerConfigDir: string;
+  taskPlanPath?: string;
   ui: UserInteraction;
   logsDir?: string;
   task?: string;
@@ -398,6 +419,8 @@ interface LoopIntegrationOptions {
   statusReporter?: LoopStatusReporter; // フェーズ別ステータス更新コールバック
 }
 ```
+
+`onQueryManager` は、`task-plan.md` が指定されている場合にその内容を質問コンテキストへ自動付与する。
 
 ### 構造化評価 (`evaluation-report.ts`)
 

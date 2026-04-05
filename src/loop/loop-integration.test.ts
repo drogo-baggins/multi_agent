@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { afterEach, describe, it, mock } from "node:test";
 
 import type { Agent, AgentToolResult } from "@mariozechner/pi-agent-core";
@@ -107,7 +110,8 @@ describe("createLoopCallbacks", () => {
     const manager = createMockAgent();
     const { registry } = createRegistry(worker.agent, manager.agent);
 
-    const invokeMock = mock.method(loopIntegrationDependencies, "invokeAgent", async () => createInvokeResult("worker response"));
+    const workerResponse = "worker response ".repeat(20).trim();
+    const invokeMock = mock.method(loopIntegrationDependencies, "invokeAgent", async () => createInvokeResult(workerResponse));
 
     const callbacks = createLoopCallbacks({
       registry,
@@ -117,7 +121,7 @@ describe("createLoopCallbacks", () => {
 
     const result = await callbacks.executeWorker("placeholder task", { iteration: 1 });
 
-    assert.equal(result, "worker response");
+    assert.equal(result, workerResponse);
     assert.equal(worker.reset.mock.calls.length, 1);
     assert.equal(invokeMock.mock.calls.length, 1);
     assert.equal(invokeMock.mock.calls[0]?.arguments[0], worker.agent);
@@ -129,7 +133,8 @@ describe("createLoopCallbacks", () => {
     const manager = createMockAgent();
     const { registry } = createRegistry(worker.agent, manager.agent);
 
-    const invokeMock = mock.method(loopIntegrationDependencies, "invokeAgent", async () => createInvokeResult("improved response"));
+    const improvedResponse = "improved response ".repeat(20).trim();
+    const invokeMock = mock.method(loopIntegrationDependencies, "invokeAgent", async () => createInvokeResult(improvedResponse));
 
     const callbacks = createLoopCallbacks({
       registry,
@@ -149,13 +154,117 @@ describe("createLoopCallbacks", () => {
 
     const result = await callbacks.executeWorker("research MDM tools", context);
 
-    assert.equal(result, "improved response");
+    assert.equal(result, improvedResponse);
     const prompt = String(invokeMock.mock.calls[0]?.arguments[1] ?? "");
     assert.equal(prompt.includes("research MDM tools"), true);
     assert.equal(prompt.includes("イテレーション2"), true);
     assert.equal(prompt.includes("60/100"), true);
     assert.equal(prompt.includes("Missing URLs"), true);
     assert.equal(prompt.includes("Add more references"), true);
+  });
+
+  it("executeWorker falls back to report.md when agent output is short", async () => {
+    const worker = createMockAgent();
+    const manager = createMockAgent();
+    const { registry } = createRegistry(worker.agent, manager.agent);
+
+    const reportContent = "R".repeat(240);
+    const invokeMock = mock.method(loopIntegrationDependencies, "invokeAgent", async () => createInvokeResult("short output"));
+    const readReportMock = mock.method(loopIntegrationDependencies, "readReportFile", async () => reportContent);
+
+    const callbacks = createLoopCallbacks({
+      registry,
+      workerConfigDir: "/tmp/worker",
+      workerSandboxDir: "/tmp/sandbox",
+      ui: createMockUI()
+    });
+
+    const result = await callbacks.executeWorker("placeholder task", { iteration: 1 });
+
+    assert.equal(result, reportContent);
+    assert.equal(invokeMock.mock.calls.length, 1);
+    assert.equal(readReportMock.mock.calls.length, 1);
+  });
+
+  it("executeWorker validates report.md even when agent output is long", async () => {
+    const worker = createMockAgent();
+    const manager = createMockAgent();
+    const { registry } = createRegistry(worker.agent, manager.agent);
+
+    const longAgentText = "A".repeat(240);
+    const retryReportContent = "R".repeat(240);
+    const invokeMock = mock.method(loopIntegrationDependencies, "invokeAgent", async () => {
+      const callIndex = invokeMock.mock.calls.length;
+      return createInvokeResult(callIndex === 0 ? longAgentText : retryReportContent);
+    });
+    const readReportMock = mock.method(loopIntegrationDependencies, "readReportFile", async () => {
+      const callIndex = readReportMock.mock.calls.length;
+      return callIndex === 0 ? "" : retryReportContent;
+    });
+
+    const callbacks = createLoopCallbacks({
+      registry,
+      workerConfigDir: "/tmp/worker",
+      workerSandboxDir: "/tmp/sandbox",
+      ui: createMockUI()
+    });
+
+    const result = await callbacks.executeWorker("placeholder task", { iteration: 1 });
+
+    assert.equal(result, retryReportContent);
+    assert.equal(invokeMock.mock.calls.length, 2);
+    assert.equal(readReportMock.mock.calls.length, 2);
+  });
+
+  it("executeWorker sends the retry prompt when report.md is also short", async () => {
+    const worker = createMockAgent();
+    const manager = createMockAgent();
+    const { registry } = createRegistry(worker.agent, manager.agent);
+
+    const invokeResponses = [
+      createInvokeResult("short output"),
+      createInvokeResult("retry acknowledged")
+    ];
+    const invokeMock = mock.method(loopIntegrationDependencies, "invokeAgent", async () => invokeResponses.shift() ?? createInvokeResult("fallback"));
+    const readReportMock = mock.method(loopIntegrationDependencies, "readReportFile", async () => "still short");
+
+    const callbacks = createLoopCallbacks({
+      registry,
+      workerConfigDir: "/tmp/worker",
+      workerSandboxDir: "/tmp/sandbox",
+      ui: createMockUI()
+    });
+
+    const result = await callbacks.executeWorker("placeholder task", { iteration: 1 });
+
+    assert.equal(result, "");
+    assert.equal(invokeMock.mock.calls.length, 2);
+    assert.equal(readReportMock.mock.calls.length, 2);
+    assert.equal(String(invokeMock.mock.calls[1]?.arguments[1] ?? "").includes("output/report.md"), true);
+  });
+
+  it("executeWorker returns empty string when retry still does not produce a long report", async () => {
+    const worker = createMockAgent();
+    const manager = createMockAgent();
+    const { registry } = createRegistry(worker.agent, manager.agent);
+
+    const invokeResponses = [
+      createInvokeResult("short output"),
+      createInvokeResult("retry acknowledged")
+    ];
+    mock.method(loopIntegrationDependencies, "invokeAgent", async () => invokeResponses.shift() ?? createInvokeResult("fallback"));
+    mock.method(loopIntegrationDependencies, "readReportFile", async () => "tiny");
+
+    const callbacks = createLoopCallbacks({
+      registry,
+      workerConfigDir: "/tmp/worker",
+      workerSandboxDir: "/tmp/sandbox",
+      ui: createMockUI()
+    });
+
+    const result = await callbacks.executeWorker("placeholder task", { iteration: 1 });
+
+    assert.equal(result, "");
   });
 
   it("evaluateProduct invokes manager with evaluation prompt and parses response", async () => {
@@ -487,6 +596,50 @@ describe("createLoopCallbacks", () => {
     assert.equal(reports[0]?.includes("60ms"), true);
   });
 
+  it("onIterationComplete warns when empty work products repeat even if scores improve", () => {
+    const worker = createMockAgent();
+    const manager = createMockAgent();
+    const { registry } = createRegistry(worker.agent, manager.agent);
+    const notify = mock.fn(() => {});
+
+    const callbacks = createLoopCallbacks({
+      registry,
+      workerConfigDir: "/tmp/worker",
+      ui: createMockUI({ notify })
+    });
+
+    callbacks.onIterationComplete({
+      iteration: 1,
+      workProduct: "",
+      evaluation: { ...createEvaluation(), qualityScore: 10 },
+      improvements: [],
+      latencyMs: {
+        workerExecutionMs: 10,
+        evaluationMs: 20,
+        managerImprovementMs: 30,
+        totalMs: 60
+      },
+      outcome: "improvement-applied"
+    });
+
+    callbacks.onIterationComplete({
+      iteration: 2,
+      workProduct: "",
+      evaluation: { ...createEvaluation(), qualityScore: 95 },
+      improvements: [],
+      latencyMs: {
+        workerExecutionMs: 11,
+        evaluationMs: 21,
+        managerImprovementMs: 31,
+        totalMs: 63
+      },
+      outcome: "improvement-applied"
+    });
+
+    assert.equal(notify.mock.calls.length, 1);
+    assert.equal(String(notify.mock.calls[0]?.arguments[0] ?? "").includes("成果物が連続して空"), true);
+  });
+
   it("passes through waitForInterrupt when provided", async () => {
     const worker = createMockAgent();
     const manager = createMockAgent();
@@ -519,18 +672,38 @@ describe("createLoopCallbacks", () => {
     assert.equal(callbacks.waitForInterrupt, undefined);
   });
 
-  it("does not expose onQueryManager since manager queries are handled inline in showInterruptDialog", () => {
+  it("onQueryManager injects task-plan context and notifies the user", async () => {
     const worker = createMockAgent();
     const manager = createMockAgent();
     const { registry } = createRegistry(worker.agent, manager.agent);
+    const notify = mock.fn(() => {});
+    const tempDir = await mkdtemp(join(tmpdir(), "loop-callbacks-"));
+    const taskPlanPath = join(tempDir, "task-plan.md");
+    await writeFile(taskPlanPath, "# Task Plan\n\n- TODO [L1-001] Investigate status updates\n", "utf-8");
+
+    const invokeMock = mock.method(loopIntegrationDependencies, "invokeAgent", async () => createInvokeResult("Manager answer"));
 
     const callbacks = createLoopCallbacks({
       registry,
       workerConfigDir: "/tmp/worker",
-      ui: createMockUI()
+      ui: createMockUI({ notify }),
+      taskPlanPath
     });
 
-    assert.equal((callbacks as Record<string, unknown>).onQueryManager, undefined);
+    const response = await callbacks.onQueryManager?.("現在の進捗は？");
+
+    assert.equal(response, "Manager answer");
+    assert.equal(invokeMock.mock.calls.length, 1);
+    assert.equal(invokeMock.mock.calls[0]?.arguments[0], manager.agent);
+    const prompt = String(invokeMock.mock.calls[0]?.arguments[1] ?? "");
+    assert.equal(prompt.includes("[現在のタスク計画]"), true);
+    assert.equal(prompt.includes("Investigate status updates"), true);
+    assert.equal(prompt.includes("[ユーザーの質問]"), true);
+    assert.equal(prompt.includes("現在の進捗は？"), true);
+    assert.equal(notify.mock.calls.length, 1);
+    assert.equal(String(notify.mock.calls[0]?.arguments[0] ?? ""), "Manager answer");
+
+    await rm(tempDir, { recursive: true, force: true });
   });
 });
 

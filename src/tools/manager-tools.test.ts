@@ -7,8 +7,10 @@ import { after, before, describe, it } from "node:test";
 import {
   createEvaluateWorkProductTool,
   createReadChangelogTool,
+  createReadTaskPlanTool,
   createReadWorkProductTool,
   createReadWorkerConfigTool,
+  createUpdateTaskPlanTool,
   createUpdateWorkerConfigTool
 } from "./manager-tools.js";
 
@@ -122,6 +124,93 @@ describe("manager tools", () => {
     const text = getText(result);
 
     assert.equal(text, "changelog body");
+  });
+
+  it("read_task_plan returns missing message when task-plan is absent", async () => {
+    const taskPlanPath = join(tempRoot, "workspace", "task-plan.md");
+    await mkdir(join(tempRoot, "workspace"), { recursive: true });
+
+    const tool = createReadTaskPlanTool(taskPlanPath);
+    const result = await tool.execute("call-7", {});
+    const text = getText(result);
+
+    assert.equal(text, "タスク計画はまだ作成されていません。");
+  });
+
+  it("update_task_plan updates status and appends a note", async () => {
+    const taskPlanPath = join(tempRoot, "workspace-update-task-plan", "task-plan.md");
+    await mkdir(join(tempRoot, "workspace-update-task-plan"), { recursive: true });
+    const planPath = taskPlanPath;
+    await writeFile(
+      planPath,
+      [
+        "# タスク計画",
+        "",
+        "## 成果物構造",
+        "- TODO [L2-001] Collect sources",
+        "  - スコープ: Official docs",
+        "",
+        "## ユーザー指示履歴",
+        "- なし"
+      ].join("\n")
+    );
+
+    const tool = createUpdateTaskPlanTool(taskPlanPath);
+    const result = await tool.execute("call-8", {
+      operation: "update-work-unit",
+      workUnitGoal: "Collect sources",
+      newStatus: "DOING",
+      note: "L3-001 Search official references"
+    });
+
+    const text = getText(result);
+    const updated = await readFile(planPath, "utf-8");
+
+    assert.equal(text, "Updated task-plan.md: Collect sources → DOING");
+    assert.match(updated, /- DOING \[L2-001\] Collect sources/);
+    assert.match(updated, /Search official references/);
+  });
+
+  it("update_task_plan can add and update explicit L3 entries", async () => {
+    const taskPlanPath = join(tempRoot, "workspace-l3", "task-plan.md");
+    await mkdir(join(tempRoot, "workspace-l3"), { recursive: true });
+    await writeFile(
+      taskPlanPath,
+      [
+        "# タスク計画",
+        "",
+        "## 成果物構造",
+        "- TODO [L2-001] Collect sources",
+        "  - スコープ: Official docs",
+        "",
+        "## ユーザー指示履歴",
+        "- なし"
+      ].join("\n")
+    );
+
+    const tool = createUpdateTaskPlanTool(taskPlanPath);
+    const addResult = await tool.execute("call-9", {
+      operation: "add-l3",
+      workUnitGoal: "Collect sources",
+      newStatus: "DOING",
+      l3EntryId: "L3-001",
+      l3Description: "Search official references"
+    });
+
+    assert.equal(getText(addResult), "Updated task-plan.md: Collect sources → DOING");
+
+    const updateResult = await tool.execute("call-10", {
+      operation: "update-l3",
+      newStatus: "DONE",
+      l3EntryId: "L3-001",
+      note: "Validated against official docs"
+    });
+
+    assert.equal(getText(updateResult), "Updated task-plan.md: L3-001 → DONE");
+
+    const updated = await readFile(taskPlanPath, "utf-8");
+    assert.match(updated, /- DONE \[L3-001\] Search official references/);
+    assert.match(updated, /Validated against official docs/);
   });
 
   it("update_worker_config rejects when write fails due to read-only file", async () => {
