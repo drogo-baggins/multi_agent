@@ -9,6 +9,7 @@ import type { Agent, AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { AgentRegistry } from "../communication/agent-registry.js";
 import { loopIntegrationDependencies } from "../loop/loop-integration.js";
 import { createCustomToolDefinitions } from "./tool-definitions.js";
+import { createHumanToolStatusController } from "./human-tool-status-ref.js";
 
 function createMockAgent(): Agent {
   return {
@@ -132,7 +133,8 @@ describe("start_research_loop Ctrl+X path", () => {
       registry,
       workerConfigDir,
       sandboxDir,
-      taskPlanPath
+      taskPlanPath,
+      humanToolRuntimeController: createHumanToolStatusController()
     });
     const startResearchLoop = tools.find((tool) => tool.name === "start_research_loop");
     assert.ok(startResearchLoop);

@@ -36,15 +36,20 @@ export interface WorkerContext {
 }
 
 export interface LoopCallbacks {
-  executeWorker: (task: string, context: WorkerContext) => Promise<string>;
+  executeWorker: (task: string, context: WorkerContext, signal?: AbortSignal) => Promise<string>;
   evaluateProduct: (workProduct: string, signal?: AbortSignal) => Promise<EvaluationReport>;
   getUserFeedback: (workProduct: string, evaluation: EvaluationReport, iteration: number) => Promise<UserFeedback>;
   executeImprovement: (requests: ImprovementRequest[], signal?: AbortSignal) => Promise<string[]>;
   onIterationComplete: (result: IterationResult) => void;
   onIterationStateSaved?: (iteration: number, stateFile: string) => void;
   readCurrentConfig: () => Promise<string>;
-  waitForInterrupt?: () => Promise<InterruptRequest>;
+  waitForInterrupt?: () => InterruptWaiter;
   onQueryManager?: (question: string) => Promise<string>;
+}
+
+export interface InterruptWaiter {
+  promise: Promise<InterruptRequest>;
+  cancel: () => void;
 }
 
 export type InterruptRequest =
@@ -140,10 +145,12 @@ async function raceInterruptPromise<T>(promise: Promise<T>, interruptPromise: Pr
 async function handleInterruptLoop<T>(
   initialRaced: InterruptRaced<T>,
   retryFn: () => Promise<InterruptRaced<T>>,
-  onQueryManager?: (question: string) => Promise<string>
+  onQueryManager?: (question: string) => Promise<string>,
+  retireCurrentInterrupt?: () => void
 ): Promise<InterruptRaced<T>> {
   let raced = initialRaced;
   while (raced.kind === "interrupt" && raced.request.type === "query-manager") {
+    retireCurrentInterrupt?.();
     await onQueryManager?.(raced.request.question);
     raced = await retryFn();
   }
@@ -157,14 +164,18 @@ async function handleInterruptLoop<T>(
 export async function withTimeoutAndInterrupt<T>(
   taskFn: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number | undefined,
-  waitForInterrupt?: () => Promise<InterruptRequest>,
+  waitForInterrupt?: () => InterruptWaiter,
   onQueryManager?: (question: string) => Promise<string>
 ): Promise<InterruptRaced<T>> {
+  let cancelCurrentInterrupt: (() => void) | undefined;
+
   const raceOnce = async (): Promise<InterruptRaced<T>> => {
     const controller = new AbortController();
     const promise = taskFn(controller.signal);
     const timedPromise = timeoutMs === undefined ? promise : withTimeout(promise, timeoutMs);
-    const raced = await raceInterruptPromise(timedPromise, waitForInterrupt?.());
+    const waiter = waitForInterrupt?.();
+    cancelCurrentInterrupt = waiter?.cancel;
+    const raced = await raceInterruptPromise(timedPromise, waiter?.promise);
     if (raced.kind === "interrupt") {
       controller.abort();
       void timedPromise.catch(() => undefined);
@@ -172,7 +183,7 @@ export async function withTimeoutAndInterrupt<T>(
     return raced;
   };
 
-  return handleInterruptLoop(await raceOnce(), raceOnce, onQueryManager);
+  return handleInterruptLoop(await raceOnce(), raceOnce, onQueryManager, () => cancelCurrentInterrupt?.());
 }
 
 function emptyEvaluation(): EvaluationReport {
@@ -261,17 +272,22 @@ export async function runPersistenceLoop(
       };
 
       const workerStart = now();
-      const workerPromise = withTimeout(callbacks.executeWorker(task, workerContext), loopConfig.iterationTimeoutMs);
+      const workerController = new AbortController();
+      const workerPromise = withTimeout(
+        callbacks.executeWorker(task, workerContext, workerController.signal),
+        loopConfig.iterationTimeoutMs
+      );
 
       if (callbacks.waitForInterrupt) {
         const raceWorker = async (): Promise<InterruptRaced<string>> => {
-          currentInterruptPromise = callbacks.waitForInterrupt?.();
+          currentInterruptPromise = callbacks.waitForInterrupt?.().promise;
           if (currentInterruptPromise) void currentInterruptPromise.catch(() => undefined);
           return raceInterruptPromise(workerPromise, currentInterruptPromise);
         };
         let raced = await handleInterruptLoop(await raceWorker(), raceWorker, callbacks.onQueryManager);
 
         if (raced.kind === "interrupt") {
+          workerController.abort();
           void workerPromise.catch(() => undefined);
           workerExecutionMs = Math.max(0, now() - workerStart);
           const interruptedResult = createResult({

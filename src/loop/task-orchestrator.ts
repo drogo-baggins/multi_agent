@@ -14,7 +14,7 @@ import {
   type WorkUnitResult
 } from "./work-unit.js";
 import type { AuditLogger } from "./manager-audit-log.js";
-import type { LoopCallbacks, IterationResult, InterruptRequest } from "./persistence-loop.js";
+import type { InterruptWaiter, LoopCallbacks, IterationResult, InterruptRequest } from "./persistence-loop.js";
 import { runPersistenceLoop, withTimeoutAndInterrupt } from "./persistence-loop.js";
 
 // ---------------------------------------------------------------------------
@@ -363,7 +363,7 @@ export interface DecomposedLoopOptions {
   logsDir?: string;
   taskPlanPath?: string;
   statusReporter?: LoopStatusReporter;
-  waitForInterrupt?: () => Promise<InterruptRequest>;
+  waitForInterrupt?: () => InterruptWaiter;
   decomposeTaskFn?: typeof decomposeTask;
   synthesizeResultsFn?: typeof synthesizeResults;
   runPersistenceLoopFn?: typeof runPersistenceLoop;

@@ -13,6 +13,7 @@ import { createWorkerAgent } from "../agents/worker-agent.js";
 import { AgentRegistry } from "../communication/agent-registry.js";
 import { loadAgentConfig } from "../config/config-loader.js";
 import { createCustomToolDefinitions } from "../tools/tool-definitions.js";
+import { createHumanToolStatusController } from "../tools/human-tool-status-ref.js";
 
 const API_KEY = process.env["ANTHROPIC_API_KEY"];
 const SKIP_REASON = "ANTHROPIC_API_KEY not set — skipping E2E tests";
@@ -95,7 +96,13 @@ async function createProxyForTest(configDir: string, registry: AgentRegistry, wo
     streamFn: streamSimple,
     getApiKey
   });
-  const customTools = createCustomToolDefinitions({ registry, workerConfigDir, sandboxDir, taskPlanPath: join(sandboxDir, "task-plan.md") });
+  const customTools = createCustomToolDefinitions({
+    registry,
+    workerConfigDir,
+    sandboxDir,
+    taskPlanPath: join(sandboxDir, "task-plan.md"),
+    humanToolRuntimeController: createHumanToolStatusController()
+  });
   agent.setTools(customTools as any);
   return agent;
 }

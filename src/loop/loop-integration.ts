@@ -10,8 +10,7 @@ import { formatEvaluationReport, parseEvaluationReport } from "./evaluation-repo
 import { formatImprovementRequest, type ImprovementRequest } from "./improvement-request.js";
 import { createAuditLogger, type AuditLogger } from "./manager-audit-log.js";
 import { detectStagnation } from "./stagnation-detector.js";
-import type { IterationResult, LoopCallbacks, UserFeedback, WorkerContext } from "./persistence-loop.js";
-import type { InterruptRequest } from "./persistence-loop.js";
+import type { IterationResult, InterruptRequest, InterruptWaiter, LoopCallbacks, UserFeedback, WorkerContext } from "./persistence-loop.js";
 
 export interface UserInteraction {
   select(title: string, options: string[]): Promise<string | undefined>;
@@ -43,7 +42,7 @@ export interface LoopIntegrationOptions {
   statusReporter?: LoopStatusReporter;
   onIterationReport?: (report: string) => void;
   auditLogger?: AuditLogger;
-  waitForInterrupt?: () => Promise<InterruptRequest>;
+  waitForInterrupt?: () => InterruptWaiter;
 }
 
 interface LoopIntegrationDependencies {
@@ -217,7 +216,7 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
       return text;
     },
 
-    executeWorker: async (task: string, context: WorkerContext): Promise<string> => {
+    executeWorker: async (task: string, context: WorkerContext, signal?: AbortSignal): Promise<string> => {
       options.statusReporter?.onWorkerStart(context.iteration, options.maxIterations ?? 10);
       const workerAgent = await options.registry.get("worker");
       workerAgent.reset();
@@ -228,7 +227,7 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
         prompt = `${task}\n\n---\n${workerPromptContext}`;
       }
 
-      const response = await loopIntegrationDependencies.invokeAgent(workerAgent, prompt);
+      const response = await loopIntegrationDependencies.invokeAgent(workerAgent, prompt, signal);
       const agentText = extractTextOrThrow(response);
 
       if (!options.workerSandboxDir) {
@@ -241,7 +240,7 @@ export function createLoopCallbacks(options: LoopIntegrationOptions): LoopCallba
       }
 
       const retryPrompt = "output/report.md が見つかりません。今すぐ output/report.md を作成してください。宣言だけでなく、実際にファイルを書き込んでください。";
-      const retryResponse = await loopIntegrationDependencies.invokeAgent(workerAgent, retryPrompt);
+      const retryResponse = await loopIntegrationDependencies.invokeAgent(workerAgent, retryPrompt, signal);
       const retryAgentText = extractTextOrThrow(retryResponse);
 
       const retryReport = await loopIntegrationDependencies.readReportFile(options.workerSandboxDir);

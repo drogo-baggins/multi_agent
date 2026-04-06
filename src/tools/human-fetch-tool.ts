@@ -4,6 +4,7 @@ import type { Static } from "@sinclair/typebox";
 
 import { capturePageWithCdp } from "../search/cdp-capture.js";
 import { extractContentFromHtml } from "../search/content-extractor.js";
+import type { HumanToolCdpCallbacks } from "./human-tool-status-ref.js";
 
 const MAX_CONTENT_CHARS = 80000;
 
@@ -21,7 +22,9 @@ const HumanFetchParametersSchema = Type.Object({
 
 type HumanFetchParameters = Static<typeof HumanFetchParametersSchema>;
 
-export function createHumanFetchTool(): AgentTool<typeof HumanFetchParametersSchema> {
+export function createHumanFetchTool(
+  cdpCallbacks?: HumanToolCdpCallbacks
+): AgentTool<typeof HumanFetchParametersSchema> {
   return {
     name: "web_fetch",
     label: "Web Fetch (Human-assisted)",
@@ -29,51 +32,95 @@ export function createHumanFetchTool(): AgentTool<typeof HumanFetchParametersSch
       "Fetches a web page. Opens the URL in a browser for human interaction " +
       "(login, CAPTCHA, etc.), then captures the page DOM automatically.",
     parameters: HumanFetchParametersSchema,
-    async execute(_toolCallId: string, params: HumanFetchParameters, signal?: AbortSignal) {
-      process.stdout.write(`\n`);
-      process.stdout.write(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
-      process.stdout.write(`[human mode] 取得URL: ${params.url}\n`);
-      process.stdout.write(`[human mode] ブラウザでページを開きます...\n`);
-      process.stdout.write(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
-
-      const result = await capturePageWithCdp(params.url, {
-        waitUntil: "networkidle",
-        signal
+    async execute(
+      _toolCallId: string,
+      params: HumanFetchParameters,
+      signal?: AbortSignal,
+      onUpdate?: Parameters<AgentTool<typeof HumanFetchParametersSchema>["execute"]>[3]
+    ) {
+      onUpdate?.({
+        content: [{ type: "text", text: `[human mode] 取得URL: ${params.url}` }],
+        details: undefined
       });
 
-      if (result.skipped || result.html === "") {
-        return {
-          content: [
-            {
+      cdpCallbacks?.onPromptReady(`[human mode] ブラウザで取得中: ${params.url}`);
+
+      try {
+        const result = await capturePageWithCdp(params.url, {
+          waitUntil: "networkidle",
+          signal,
+          onPromptReady: (prompt) => cdpCallbacks?.onPromptReady(prompt)
+        });
+
+        if (result.skipped || result.html === "") {
+          const isInjectFailure = result.reason === "inject-failure";
+          onUpdate?.({
+            content: [{
               type: "text",
-              text: `Failed to fetch ${params.url}: skipped by user or timed out.`
-            }
-          ],
-          details: { url: params.url, error: "skipped" }
-        };
-      }
-
-      const extracted = extractContentFromHtml(result.url, result.html);
-
-      if (extracted.error) {
-        return {
-          content: [{ type: "text", text: `Failed to fetch ${params.url}: ${extracted.error}` }],
-          details: { url: params.url, error: extracted.error }
-        };
-      }
-
-      const title = extracted.title || result.title || "Untitled";
-      const formattedContent = formatFetchResult(result.url, title, extracted.content);
-
-      return {
-        content: [{ type: "text", text: formattedContent }],
-        details: {
-          url: result.url,
-          title,
-          truncated: extracted.content.length > MAX_CONTENT_CHARS,
-          contentLength: extracted.content.length
+              text: isInjectFailure
+                ? `[human mode] 取得完了: ${params.url} (取得不可)`
+                : `[human mode] 取得完了: ${params.url} (skipped)`
+            }],
+            details: undefined
+          });
+          if (isInjectFailure) {
+            return {
+              content: [{ type: "text", text: `Failed to fetch ${params.url}: 取得不可 (browser capture UI could not be injected).` }],
+              details: { url: params.url, error: "取得不可", reason: "inject-failure" }
+            };
+          }
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Failed to fetch ${params.url}: skipped by user or timed out.`
+              }
+            ],
+            details: { url: params.url, error: "skipped", reason: result.reason }
+          };
         }
-      };
+
+        const extracted = extractContentFromHtml(result.url, result.html);
+
+        if (extracted.error) {
+          onUpdate?.({
+            content: [{ type: "text", text: `[human mode] 取得失敗: ${params.url}` }],
+            details: undefined
+          });
+          return {
+            content: [{ type: "text", text: `Failed to fetch ${params.url}: ${extracted.error}` }],
+            details: { url: params.url, error: extracted.error }
+          };
+        }
+
+        const title = extracted.title || result.title || "Untitled";
+        const formattedContent = formatFetchResult(result.url, title, extracted.content);
+
+        onUpdate?.({
+          content: [{ type: "text", text: `[human mode] 取得完了: ${params.url}` }],
+          details: undefined
+        });
+
+        return {
+          content: [{ type: "text", text: formattedContent }],
+          details: {
+            url: result.url,
+            title,
+            truncated: extracted.content.length > MAX_CONTENT_CHARS,
+            contentLength: extracted.content.length
+          }
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        onUpdate?.({
+          content: [{ type: "text", text: `[human mode] 取得失敗: ${params.url}` }],
+          details: undefined
+        });
+        return {
+          content: [{ type: "text", text: `Failed to fetch ${params.url}: ${message}` }],
+          details: { url: params.url, error: message }
+        };
+      }
     }
   };
 }

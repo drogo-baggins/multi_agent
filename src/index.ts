@@ -14,6 +14,7 @@ import { createManagerAgent } from "./agents/manager-agent.js";
 import { resolveAgentModel } from "./agents/resolve-agent-model.js";
 import { AgentRegistry } from "./communication/agent-registry.js";
 import { createCustomToolDefinitions } from "./tools/tool-definitions.js";
+import { createHumanToolStatusController } from "./tools/human-tool-status-ref.js";
 import { loadEnvFile } from "./env.js";
 import { loadSearchConfig } from "./search/search-config.js";
 
@@ -31,6 +32,7 @@ const logsDir = join(projectRoot, "workspace", "logs");
 async function main(): Promise<void> {
   loadEnvFile();
   const searchConfig = loadSearchConfig();
+  const humanToolRuntimeController = createHumanToolStatusController();
 
   const registry = new AgentRegistry();
 
@@ -49,7 +51,8 @@ async function main(): Promise<void> {
       sandboxDir,
       model: resolveAgentModel("worker", session.model, session.modelRegistry),
       getApiKey,
-      searchMode: searchConfig.mode
+      searchMode: searchConfig.mode,
+      cdpCallbacks: humanToolRuntimeController
     });
   });
 
@@ -66,7 +69,14 @@ async function main(): Promise<void> {
     });
   });
 
-  const customTools = createCustomToolDefinitions({ registry, workerConfigDir, sandboxDir, taskPlanPath, logsDir });
+  const customTools = createCustomToolDefinitions({
+    registry,
+    workerConfigDir,
+    sandboxDir,
+    taskPlanPath,
+    humanToolRuntimeController,
+    logsDir
+  });
 
   // Detect aborted session via the most recent audit log (system-written, always created by
   // start_research_loop). If the most recent log lacks "## Synthesis Complete" it was aborted.

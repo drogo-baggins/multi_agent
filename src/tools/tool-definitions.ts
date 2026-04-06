@@ -7,6 +7,7 @@ import type { AgentRegistry } from "../communication/agent-registry.js";
 import { searchWeb } from "../search/index.js";
 import { extractContent } from "../search/index.js";
 import { urlCache } from "./url-cache.js";
+import type { HumanToolRuntimeController } from "./human-tool-status-ref.js";
 import {
   createLoopCallbacks,
   type UserInteraction,
@@ -177,6 +178,7 @@ function createStartResearchLoopToolDefinition(
   workerConfigDir: string,
   sandboxDir: string,
   taskPlanPath: string,
+  humanToolRuntimeController: HumanToolRuntimeController,
   logsDir?: string
 ): ToolDefinition<typeof StartResearchLoopParametersSchema> {
   return {
@@ -207,7 +209,7 @@ function createStartResearchLoopToolDefinition(
       const maxIterations = params.maxIterations ?? 10;
       let channelVersion = 0;
       let resolveInterrupt: ((req: InterruptRequest) => void) | undefined;
-      let isDialogOpen = false;
+      let isManagerBusy = false;
 
       function resetInterruptChannel(): Promise<InterruptRequest> {
         channelVersion += 1;
@@ -219,6 +221,18 @@ function createStartResearchLoopToolDefinition(
             }
           };
         });
+      }
+
+      function invalidateCurrentInterruptChannel(): void {
+        channelVersion += 1;
+        resolveInterrupt = undefined;
+      }
+
+      function createInterruptWaiter() {
+        return {
+          promise: resetInterruptChannel(),
+          cancel: invalidateCurrentInterruptChannel
+        };
       }
 
       async function showInterruptDialog(): Promise<void> {
@@ -273,19 +287,29 @@ function createStartResearchLoopToolDefinition(
         }
       }
 
+      const createCdpCallbacks = () => ({
+        onPromptReady(prompt: string): void {
+          if (!ctx.hasUI) {
+            return;
+          }
+
+          ctx.ui.setStatus(STATUS_KEY, prompt);
+          ctx.ui.setWorkingMessage(prompt);
+        }
+      });
+
       const unsubscribeInput = ctx.hasUI
         ? ctx.ui.onTerminalInput((data: string) => {
-            if (data === "\x18") {
-              if (resolveInterrupt && !isDialogOpen) {
-                isDialogOpen = true;
-                void showInterruptDialog()
-                  .catch(() => undefined)
-                  .finally(() => {
-                    isDialogOpen = false;
-                  });
-              }
+            if (isManagerBusy) {
               return { consume: true };
             }
+
+            if (data === "\x18") {
+              resolveInterrupt?.({ type: "stop" });
+              resolveInterrupt = undefined;
+              return { consume: true };
+            }
+
             return undefined;
           })
         : () => {};
@@ -333,48 +357,71 @@ function createStartResearchLoopToolDefinition(
           }
         : undefined;
 
-      const auditLogger = logsDir
-        ? await createAuditLogger(logsDir, params.task)
-        : undefined;
-
       const iterationReports: string[] = [];
-      const callbacks = createLoopCallbacks({
-        registry,
-        workerConfigDir,
-        workerSandboxDir: sandboxDir,
-        ui,
-        logsDir,
-        task: params.task,
-        qualityThreshold: params.qualityThreshold,
-        auditLogger,
-        maxIterations,
-        statusReporter,
-        taskPlanPath,
-        ...(ctx.hasUI
-          ? {
-              waitForInterrupt: () => resetInterruptChannel()
-            }
-          : {}),
-        onIterationReport: (report) => {
-          iterationReports.push(report);
-        }
-      });
-
       try {
-        const managerAgent = await registry.get("manager");
-        const result = await runDecomposedLoop({
-          task: params.task,
-          managerAgent,
-          callbacks,
-          auditLogger,
-          notify: ui.notify,
-          maxIterationsPerUnit: maxIterations,
-          iterationTimeoutMs: 600_000,
-          logsDir,
-          taskPlanPath,
-          statusReporter,
-          ...(ctx.hasUI ? { waitForInterrupt: () => resetInterruptChannel() } : {})
-        });
+        const auditLogger = logsDir
+          ? await createAuditLogger(logsDir, params.task)
+          : undefined;
+
+        const cdpCallbacks = createCdpCallbacks();
+
+        const result = await humanToolRuntimeController.runWithCallbacks(
+          {
+            setWorkingMessage: ctx.hasUI ? (msg: string) => ctx.ui.setWorkingMessage(msg) : undefined,
+            clearWorkingMessage: ctx.hasUI ? () => ctx.ui.setWorkingMessage() : undefined,
+            onPromptReady: cdpCallbacks.onPromptReady
+          },
+          async () => {
+            const callbacks = createLoopCallbacks({
+              registry,
+              workerConfigDir,
+              workerSandboxDir: sandboxDir,
+              ui,
+              logsDir,
+              task: params.task,
+              qualityThreshold: params.qualityThreshold,
+              auditLogger,
+              maxIterations,
+              statusReporter,
+              taskPlanPath,
+                ...(ctx.hasUI
+                  ? {
+                      waitForInterrupt: () => createInterruptWaiter()
+                    }
+                  : {}),
+              onIterationReport: (report) => {
+                iterationReports.push(report);
+              }
+            });
+
+            const originalOnQueryManager = callbacks.onQueryManager;
+            callbacks.onQueryManager = originalOnQueryManager
+              ? async (question: string): Promise<string> => {
+                  isManagerBusy = true;
+                  try {
+                    return await originalOnQueryManager(question);
+                  } finally {
+                    isManagerBusy = false;
+                  }
+                }
+              : undefined;
+
+            const managerAgent = await registry.get("manager");
+            return await runDecomposedLoop({
+              task: params.task,
+              managerAgent,
+              callbacks,
+              auditLogger,
+              notify: ui.notify,
+              maxIterationsPerUnit: maxIterations,
+              iterationTimeoutMs: 600_000,
+              logsDir,
+              taskPlanPath,
+              statusReporter,
+              ...(ctx.hasUI ? { waitForInterrupt: () => createInterruptWaiter() } : {})
+            });
+          }
+        );
 
         if (result.wasInterrupted) {
           const interruptSummary = [
@@ -436,14 +483,33 @@ export interface CustomToolsOptions {
   workerConfigDir: string;
   sandboxDir: string;
   taskPlanPath: string;
+  humanToolRuntimeController?: HumanToolRuntimeController;
   logsDir?: string;
 }
 
+function createNoopHumanToolRuntimeController(): HumanToolRuntimeController {
+  return {
+    runWithCallbacks: async (_callbacks, fn) => await fn(),
+    setWorkingMessage: () => undefined,
+    clearWorkingMessage: () => undefined,
+    onPromptReady: () => undefined
+  };
+}
+
 export function createCustomToolDefinitions(options: CustomToolsOptions): ToolDefinition<any>[] {
+  const humanToolRuntimeController = options.humanToolRuntimeController ?? createNoopHumanToolRuntimeController();
+
   return [
     createAskUserToolDefinition(),
     createWebSearchToolDefinition(),
     createWebFetchToolDefinition(),
-    createStartResearchLoopToolDefinition(options.registry, options.workerConfigDir, options.sandboxDir, options.taskPlanPath, options.logsDir)
+    createStartResearchLoopToolDefinition(
+      options.registry,
+      options.workerConfigDir,
+      options.sandboxDir,
+      options.taskPlanPath,
+      humanToolRuntimeController,
+      options.logsDir
+    )
   ];
 }

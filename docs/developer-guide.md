@@ -77,7 +77,7 @@ pi-agent/
 │   │   ├── proxy-tools.ts
     │   ├── human-search-tool.ts   # Human Mode 検索ツール
     │   ├── human-fetch-tool.ts    # Human Mode 取得ツール
-    │   ├── human-input-reader.ts  # CLI 入力ヘルパー（END/SKIP）
+    │   ├── human-input-reader.ts  # 入力パーサーユーティリティ（parseTerminator）
     │   ├── manager-tools.test.ts
     │   ├── human-search-tool.test.ts
     │   ├── human-fetch-tool.test.ts
@@ -87,7 +87,7 @@ pi-agent/
     │   ├── search-config.ts       # SearchMode型と設定ローダー
     │   ├── browser-launcher.ts    # Chrome 起動・CDP接続
     │   ├── cdp-session.ts         # 専用タブ Singleton 管理
-    │   ├── cdp-capture.ts         # DOM取得 + Enter待機
+    │   ├── cdp-capture.ts         # DOM取得 + ブラウザ内ボタン inject + クリック検知
     │   ├── content-extractor.ts   # HTML → Markdown 変換
     │   ├── browser-launcher.test.ts
     │   ├── cdp-session.test.ts
@@ -172,7 +172,7 @@ ANTHROPIC_API_KEY=sk-ant-... npx tsx --test src/integration/e2e.test.ts
 
 - 8.1: 作業依頼フロー（Proxy → Worker）
 - 8.2: 改善依頼フロー（Proxy → Manager → 設定更新）
-- 8.3: 曖昧リクエスト（ask_user フロー）
+- 8.3: 曖昧リクエスト（start_research_loop / route_to_manager で処理）
 - 8.4: 設定反映確認（Manager更新 → Worker再作成 → 新設定反映）
 
 ### POC検証テスト

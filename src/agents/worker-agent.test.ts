@@ -8,6 +8,7 @@ import { Agent } from "@mariozechner/pi-agent-core";
 import { getModel } from "@mariozechner/pi-ai";
 
 import { buildWorkerTools, createWorkerAgent } from "./worker-agent.js";
+import { createHumanToolStatusController } from "../tools/human-tool-status-ref.js";
 
 const testModel = getModel("anthropic", "claude-sonnet-4-20250514");
 import { createWebSearchTool } from "../tools/web-search-tool.js";
@@ -88,14 +89,14 @@ describe("worker-agent – buildWorkerTools", () => {
   });
 
   it("returns web_search and web_fetch also in human mode (same names)", () => {
-    const tools = buildWorkerTools({ sandboxDir: "/tmp", searchMode: "human" });
+    const tools = buildWorkerTools({ sandboxDir: "/tmp", searchMode: "human", cdpCallbacks: createHumanToolStatusController() });
     const names = tools.map(t => t.name);
     assert.ok(names.includes("web_search"));
     assert.ok(names.includes("web_fetch"));
   });
 
   it("uses human label in human mode", () => {
-    const tools = buildWorkerTools({ sandboxDir: "/tmp", searchMode: "human" });
+    const tools = buildWorkerTools({ sandboxDir: "/tmp", searchMode: "human", cdpCallbacks: createHumanToolStatusController() });
     const webSearch = tools.find(t => t.name === "web_search");
     assert.ok(webSearch?.label?.includes("Human"));
   });
@@ -114,15 +115,19 @@ describe("worker-agent – buildWorkerTools", () => {
 
   it("returns the same total tool count in auto and human modes", () => {
     const autoTools = buildWorkerTools({ sandboxDir: "/tmp", searchMode: "auto" });
-    const humanTools = buildWorkerTools({ sandboxDir: "/tmp", searchMode: "human" });
+    const humanTools = buildWorkerTools({ sandboxDir: "/tmp", searchMode: "human", cdpCallbacks: createHumanToolStatusController() });
     assert.equal(autoTools.length, humanTools.length);
   });
 
   it("auto and human mode web_search are distinct instances", () => {
     const autoTools = buildWorkerTools({ sandboxDir: "/tmp", searchMode: "auto" });
-    const humanTools = buildWorkerTools({ sandboxDir: "/tmp", searchMode: "human" });
+    const humanTools = buildWorkerTools({ sandboxDir: "/tmp", searchMode: "human", cdpCallbacks: createHumanToolStatusController() });
     const autoSearch = autoTools.find(t => t.name === "web_search");
     const humanSearch = humanTools.find(t => t.name === "web_search");
     assert.notEqual(autoSearch, humanSearch);
+  });
+
+  it("throws when human mode is requested without cdpCallbacks", () => {
+    assert.throws(() => buildWorkerTools({ sandboxDir: "/tmp", searchMode: "human" }), /cdpCallbacks/);
   });
 });

@@ -169,7 +169,7 @@ interface LoopCallbacks {
 |---|---|
 | `executeWorker` | `registry.get("worker")` → `agent.reset()` → `invokeAgent(worker, task)` |
 | `evaluateProduct` | `registry.get("manager")` → 構造化評価プロンプト → `parseEvaluationReport()` |
-| `getUserFeedback` | readline で評価結果表示 + `a/i/q` 選択 |
+| `getUserFeedback` | TUI で評価結果表示 + `approve/improve/quit` 選択（AbortSignal 対応・排他フラグによりキーボードロックなし） |
 | `executeImprovement` | `formatImprovementRequest()` → `invokeAgent(manager, ...)` → `registry.evict("worker")` |
 | `readCurrentConfig` | `loadAgentConfig(workerConfigDir)` |
 
@@ -230,7 +230,7 @@ interface ImprovementRequest {
 
 | リスク | 緩和策 |
 |---|---|
-| LLM分類精度 | Proxy system promptに明確な分類基準 + ask_user フォールバック |
+| LLM分類精度 | Proxy system promptに明確な分類基準 + start_research_loop 優先 |
 | Manager設定破壊 | APPEND_SYSTEM.mdのみ変更許可 + バックアップ + changelog |
 | 改善逆効果 | 仮説→検証構造強制 + 連続劣化ロールバック |
 | コンテキスト溢れ | PI toolkitの自動compaction活用 |
@@ -240,7 +240,7 @@ interface ImprovementRequest {
 
 ## Human Mode アーキテクチャ
 
-`SEARCH_MODE=human` 時、Web取得ツールが自動ヘッドレス実行からユーザー介在型のCDP経由取得に切り替わる。
+`SEARCH_MODE=human` 時、Web取得ツールが自動ヘッドレス実行からユーザー介在型のCDP経由取得に切り替わる。入力待ちは TUI ではなく、ブラウザ内の確認オーバーレイで完結する。
 
 ### ツール切り替え（`buildWorkerTools()`）
 
@@ -255,6 +255,36 @@ searchMode !== "human"（デフォルト "auto"）
 ```
 
 `src/index.ts` が起動時に `loadSearchConfig()` を呼び出し、`SEARCH_MODE` 環境変数を読み取って `searchMode` を Worker Registry ファクトリに注入する。
+
+### `capturePageWithCdp(url)` の動作フロー
+
+```text
+capturePageWithCdp(url)
+  → ページナビゲーション（domcontentloaded）
+  → page.evaluate() でオーバーレイ inject
+      inject 失敗（CSP等）→ { skipped: true, reason: "inject-failure" } を返す
+  → onPromptReady() で TUI にメッセージ表示（入力待ちなし）
+  → page.waitForFunction() でボタンクリックを検知（タイムアウトなし）
+      AbortSignal 発火 → { skipped: true, reason: "aborted" } を返す
+      スキップボタン  → { skipped: true, reason: "user-skip" } を返す
+      続行ボタン      → DOM取得 → { html, url, title, skipped: false }
+```
+
+`HumanToolCdpCallbacks` は `onPromptReady(prompt)` のみを持ち、`waitForInput` は存在しない。
+
+`CdpCaptureResult` は取得結果とスキップ理由を返す。
+
+```typescript
+type CdpCaptureSkipReason = "user-skip" | "inject-failure" | "aborted";
+
+interface CdpCaptureResult {
+  html: string;
+  url: string;
+  title: string;
+  skipped: boolean;
+  reason?: CdpCaptureSkipReason;
+}
+```
 
 ## タスク構造管理（task-plan.md）
 

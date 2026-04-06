@@ -235,7 +235,7 @@ interface ProxyAgentOptions {
 }
 ```
 
-Proxy Agentを作成。統一実行ツール（`start_research_loop`）+ `ask_user` ツールを装備。
+Proxy Agentを作成。統一実行ツール（`start_research_loop`）+ ルーティングツールを装備。
 
 ---
 
@@ -256,15 +256,11 @@ interface CustomToolsOptions {
 
 生成されるツール:
 - `start_research_loop` — Worker→Manager評価ループの起動。すべてのタスクはこのツールを通して実行される
-- `ask_user` — ユーザーへの質問・確認
 - `web_search` — Web検索
 - `web_fetch` — Webページ取得
 
 #### `start_research_loop`
 永続実行ループを起動する。パラメータ: `{ task: string, maxIterations?: number, qualityThreshold?: number }`
-
-#### `ask_user`
-ユーザーに質問するツール。パラメータ: `{ question: string }`
 
 ### Manager Tools (`manager-tools.ts`)
 
@@ -319,6 +315,62 @@ Web検索ツール（v1ではスタブ実装）。パラメータ: `{ query: str
 
 #### `createSandboxedTools(sandboxDir: string): AgentTool[]`
 PI toolkitの `createCodingTools` / `createBashTool` をサンドボックスディレクトリにスコープして返す。
+
+### Human Mode Utilities
+
+#### `HumanToolRuntimeCallbacks`
+
+`human-tool-status-ref.ts`
+
+```typescript
+interface HumanToolRuntimeCallbacks {
+  setWorkingMessage?: (msg: string) => void;
+  clearWorkingMessage?: () => void;
+  onPromptReady?: (prompt: string) => void;
+}
+```
+
+#### `HumanToolCdpCallbacks`
+
+`human-tool-status-ref.ts`
+
+```typescript
+interface HumanToolCdpCallbacks {
+  onPromptReady(prompt: string): void;
+}
+```
+
+#### `HumanToolRuntimeController`
+
+`human-tool-status-ref.ts`
+
+```typescript
+interface HumanToolRuntimeController extends HumanToolCdpCallbacks {
+  runWithCallbacks<T>(callbacks: HumanToolRuntimeCallbacks, fn: () => Promise<T> | T): Promise<T>;
+  setWorkingMessage(msg: string): void;
+  clearWorkingMessage(): void;
+}
+```
+
+`createHumanToolStatusController()` は AsyncLocalStorage ベースで、TUI の working message とブラウザ prompt 通知をランタイムごとに分離する。
+
+#### `CdpCaptureSkipReason` / `CdpCaptureResult`
+
+`cdp-capture.ts`
+
+```typescript
+type CdpCaptureSkipReason = "user-skip" | "inject-failure" | "aborted";
+
+interface CdpCaptureResult {
+  html: string;
+  url: string;
+  title: string;
+  skipped: boolean;
+  reason?: CdpCaptureSkipReason;
+}
+```
+
+`capturePageWithCdp()` はブラウザ内オーバーレイを注入し、ユーザーのクリックまたは `AbortSignal` に応じて取得継続・スキップ・中断を返す。
 
 ---
 

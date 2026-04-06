@@ -8,6 +8,7 @@ import { createWebSearchTool } from "../tools/web-search-tool.js";
 import { createWebFetchTool } from "../tools/web-fetch-tool.js";
 import { createHumanSearchTool } from "../tools/human-search-tool.js";
 import { createHumanFetchTool } from "../tools/human-fetch-tool.js";
+import type { HumanToolCdpCallbacks } from "../tools/human-tool-status-ref.js";
 import type { SearchMode } from "../search/search-config.js";
 
 export interface WorkerAgentOptions {
@@ -17,12 +18,24 @@ export interface WorkerAgentOptions {
   streamFn?: StreamFn;
   getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
   searchMode?: SearchMode;
+  cdpCallbacks?: HumanToolCdpCallbacks;
 }
 
-export function buildWorkerTools(options: Pick<WorkerAgentOptions, "sandboxDir" | "searchMode">) {
+function createNoopCdpCallbacks(): HumanToolCdpCallbacks {
+  return {
+    onPromptReady: () => undefined
+  };
+}
+
+export function buildWorkerTools(options: Pick<WorkerAgentOptions, "sandboxDir" | "searchMode" | "cdpCallbacks">) {
+  const cdpCallbacks = options.cdpCallbacks ?? createNoopCdpCallbacks();
+  if (options.searchMode === "human" && !options.cdpCallbacks) {
+    throw new Error("Human search mode requires cdpCallbacks.");
+  }
+
   const webTools =
     options.searchMode === "human"
-      ? [createHumanSearchTool(), createHumanFetchTool()]
+      ? [createHumanSearchTool(cdpCallbacks), createHumanFetchTool(cdpCallbacks)]
       : [createWebSearchTool(), createWebFetchTool()];
   return [...createSandboxedTools(options.sandboxDir), ...webTools];
 }
