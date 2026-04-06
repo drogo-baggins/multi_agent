@@ -36,7 +36,7 @@ if (Test-Path $backups) {
 Get-ChildItem -Path $ProjectRoot -Filter "loop-state.json" -Recurse -ErrorAction SilentlyContinue |
     Remove-Item -Force
 
-foreach ($dir in @("logs", "output")) {
+foreach ($dir in @("final", "logs", "output")) {
     $target = Join-Path $ProjectRoot "workspace\$dir"
     if (Test-Path $target) {
         Remove-Item -Recurse -Force $target

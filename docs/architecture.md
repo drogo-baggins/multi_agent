@@ -260,14 +260,18 @@ searchMode !== "human"（デフォルト "auto"）
 
 ```text
 capturePageWithCdp(url)
-  → ページナビゲーション（domcontentloaded）
-  → page.evaluate() でオーバーレイ inject
-      inject 失敗（CSP等）→ { skipped: true, reason: "inject-failure" } を返す
+  → resetDedicatedTabToBlank() で about:blank に戻す
+  → page.on("framenavigated") でページ遷移監視を開始
+  → injectOverlay(isInitial=true) でオーバーレイを inject（about:blank なので必ず成功）
+    inject 失敗 → { skipped: true, reason: "inject-failure" } を返す
   → onPromptReady() で TUI にメッセージ表示（入力待ちなし）
-  → page.waitForFunction() でボタンクリックを検知（タイムアウトなし）
-      AbortSignal 発火 → { skipped: true, reason: "aborted" } を返す
-      スキップボタン  → { skipped: true, reason: "user-skip" } を返す
-      続行ボタン      → DOM取得 → { html, url, title, skipped: false }
+  → page.bringToFront() で専用ウィンドウを前面に出す
+  → Promise.race([page.waitForFunction(), abortPromise]) でボタンクリックを待機（タイムアウトなし）
+    framenavigated 発火 → injectOverlay(isInitial=false) で再 inject（自動）
+    AbortSignal 発火   → { skipped: true, reason: "aborted" } を返す
+    スキップボタン     → { skipped: true, reason: "user-skip" } を返す
+    続行ボタン         → removeCaptureOverlay() → waitForCaptureReady() → DOM取得
+               → { html, url, title, skipped: false }
 ```
 
 `HumanToolCdpCallbacks` は `onPromptReady(prompt)` のみを持ち、`waitForInput` は存在しない。
@@ -343,10 +347,15 @@ interface CdpCaptureResult {
 
 ```
 getOrCreateDedicatedTab()
-  → 既存タブ検索（document.title === "pi-agent-dedicated"）
-  → 未発見時のみ新規タブ作成
-  → navigateTo(url) でナビゲーション
+  → キャッシュ済み dedicatedPage が有効 → initializeDedicatedTab()
+  → findDedicatedPage() で既存タブを検索（window.name または title で識別）
+  → 未発見時のみ context.newPage() で新規タブ作成
+  → initializeDedicatedTab() で about:blank に初期化 + タブマーク + bringToFront
 ```
+
+`resetDedicatedTabToBlank()` は `capturePageWithCdp` が呼ばれるたびに専用タブを `about:blank` にリセットし、`markDedicatedTab()` でタイトルと `window.name` を設定してから前面に出す。
+
+`initializeDedicatedTab()` は `about:blank` への遷移 → タブマーク → `bringToFront` をまとめて行い、専用タブの初期状態を統一する。
 
 Worker プロセス終了時のシャットダウンフックが `clearSessionState()` を呼び出し、Playwright ブラウザ参照を解放する。
 

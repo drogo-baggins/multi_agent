@@ -30,8 +30,8 @@ export function createHumanSearchTool(
     name: "web_search",
     label: "Web Search (Human-assisted)",
     description:
-      "Searches the web. Opens a browser with the query pre-filled; " +
-      "the human presses the search button, then the result page is captured automatically.",
+      "Opens dedicated overlay and target windows, auto-navigates the target window to the search URL, " +
+      "and asks the human to confirm the page and click the capture button in the overlay.",
     parameters: HumanSearchParametersSchema,
     async execute(
       _toolCallId: string,
@@ -42,11 +42,11 @@ export function createHumanSearchTool(
       const searchUrl = buildSearchUrl(params.query);
 
       onUpdate?.({
-        content: [{ type: "text", text: `[human mode] 検索クエリ: ${params.query}` }],
+        content: [{ type: "text", text: `[human mode] ブラウザの調査対象ウィンドウを確認し、オーバーレイのボタンを押してください: ${searchUrl}` }],
         details: undefined
       });
 
-      cdpCallbacks?.onPromptReady(`[human mode] ブラウザで検索中: ${params.query}`);
+      cdpCallbacks?.onPromptReady(`[human mode] ブラウザの調査対象ウィンドウを確認し、オーバーレイのボタンを押してください: ${searchUrl}`);
 
       try {
         const result = await capturePageWithCdp(searchUrl, {

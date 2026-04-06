@@ -30,7 +30,7 @@ const taskPlanPath = join(sandboxDir, "task-plan.md");
 const logsDir = join(projectRoot, "workspace", "logs");
 
 async function main(): Promise<void> {
-  loadEnvFile();
+  loadEnvFile(join(projectRoot, ".env"));
   const searchConfig = loadSearchConfig();
   const humanToolRuntimeController = createHumanToolStatusController();
 

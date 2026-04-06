@@ -501,8 +501,6 @@ export function createCustomToolDefinitions(options: CustomToolsOptions): ToolDe
 
   return [
     createAskUserToolDefinition(),
-    createWebSearchToolDefinition(),
-    createWebFetchToolDefinition(),
     createStartResearchLoopToolDefinition(
       options.registry,
       options.workerConfigDir,

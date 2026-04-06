@@ -6,9 +6,10 @@ import { join } from "node:path";
 import { loadSearchConfig } from "./search-config.js";
 
 export const CDP_PORT = 9222;
+const SESSION_USER_DATA_DIR = join(tmpdir(), "pi-agent-chrome-profile", `${process.pid}`);
 
 export function getUserDataDir(): string {
-  return join(tmpdir(), "pi-agent-chrome-profile");
+  return SESSION_USER_DATA_DIR;
 }
 
 export function buildChromeArgs(): string[] {
@@ -16,6 +17,8 @@ export function buildChromeArgs(): string[] {
   const args = [
     `--remote-debugging-port=${CDP_PORT}`,
     `--user-data-dir=${getUserDataDir()}`,
+    "--new-window",
+    "--start-maximized",
     "--no-first-run",
     "--no-default-browser-check"
   ];

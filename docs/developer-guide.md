@@ -77,7 +77,7 @@ pi-agent/
 │   │   ├── proxy-tools.ts
     │   ├── human-search-tool.ts   # Human Mode 検索ツール
     │   ├── human-fetch-tool.ts    # Human Mode 取得ツール
-    │   ├── human-input-reader.ts  # 入力パーサーユーティリティ（parseTerminator）
+    │   ├── human-input-reader.ts  # TUI stdin 入力待ちは廃止済み。parseTerminator ユーティリティのみ残存
     │   ├── manager-tools.test.ts
     │   ├── human-search-tool.test.ts
     │   ├── human-fetch-tool.test.ts
@@ -86,8 +86,8 @@ pi-agent/
     ├── search/                # Web取得設定・CDPスタック
     │   ├── search-config.ts       # SearchMode型と設定ローダー
     │   ├── browser-launcher.ts    # Chrome 起動・CDP接続
-    │   ├── cdp-session.ts         # 専用タブ Singleton 管理
-    │   ├── cdp-capture.ts         # DOM取得 + ブラウザ内ボタン inject + クリック検知
+    │   ├── cdp-session.ts         # 専用タブ Singleton 管理・resetDedicatedTabToBlank()
+    │   ├── cdp-capture.ts         # about:blank 起点のオーバーレイ inject + framenavigated 再 inject + クリック検知
     │   ├── content-extractor.ts   # HTML → Markdown 変換
     │   ├── browser-launcher.test.ts
     │   ├── cdp-session.test.ts

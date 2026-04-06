@@ -29,8 +29,8 @@ export function createHumanFetchTool(
     name: "web_fetch",
     label: "Web Fetch (Human-assisted)",
     description:
-      "Fetches a web page. Opens the URL in a browser for human interaction " +
-      "(login, CAPTCHA, etc.), then captures the page DOM automatically.",
+      "Opens dedicated overlay and target windows, auto-navigates the target window to the URL, " +
+      "and asks the human to confirm the page and click the capture button in the overlay.",
     parameters: HumanFetchParametersSchema,
     async execute(
       _toolCallId: string,
@@ -39,11 +39,11 @@ export function createHumanFetchTool(
       onUpdate?: Parameters<AgentTool<typeof HumanFetchParametersSchema>["execute"]>[3]
     ) {
       onUpdate?.({
-        content: [{ type: "text", text: `[human mode] 取得URL: ${params.url}` }],
+        content: [{ type: "text", text: `[human mode] ブラウザの調査対象ウィンドウを確認し、オーバーレイのボタンを押してください: ${params.url}` }],
         details: undefined
       });
 
-      cdpCallbacks?.onPromptReady(`[human mode] ブラウザで取得中: ${params.url}`);
+      cdpCallbacks?.onPromptReady(`[human mode] ブラウザの調査対象ウィンドウを確認し、オーバーレイのボタンを押してください: ${params.url}`);
 
       try {
         const result = await capturePageWithCdp(params.url, {
