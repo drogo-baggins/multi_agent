@@ -20,9 +20,10 @@ rm -rf "$ROOT/agents/worker/backups"
 # Remove runtime loop state
 find "$ROOT" -name "loop-state.json" -delete 2>/dev/null || true
 
-# Clear workspace artifacts (logs, output)
+# Clear workspace artifacts (logs, output, task plan)
 rm -rf "$ROOT/workspace/logs"
 rm -rf "$ROOT/workspace/output"
+rm -f "$ROOT/workspace/task-plan.md"
 mkdir -p "$ROOT/workspace/logs" "$ROOT/workspace/output"
 
 echo "Done. Ready for a new investigation project."

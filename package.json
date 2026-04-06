@@ -9,7 +9,7 @@
     "start": "tsx src/index.ts",
     "test": "tsx --test src/**/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "new-project": "bash scripts/new-project.sh",
+    "new-project": "node scripts/new-project.mjs",
     "archive": "tsx scripts/archive.ts",
     "list-archives": "tsx scripts/list-archives.ts",
     "chrome-setup": "tsx scripts/chrome-setup.ts"

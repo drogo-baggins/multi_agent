@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it, mock } from "node:test";
@@ -347,6 +347,51 @@ describe("runDecomposedLoop", () => {
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
+  });
+
+  it("preserves the original task-plan and appends follow-up instructions", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "pi-agent-task-plan-followup-"));
+    const workspaceDir = join(tempRoot, "workspace");
+    const taskPlanPath = join(workspaceDir, "task-plan.md");
+    await mkdir(workspaceDir, { recursive: true });
+
+    process.stdout.write("[expected runtime] under 1s\n");
+
+    await writeFile(
+      taskPlanPath,
+      [
+        "# タスク計画",
+        "",
+        "**タスク**: 元のタスク",
+        "**作成日時**: 2026-04-06T00:00:00.000Z",
+        "**ステータス**: running",
+        "",
+        "## 成果物構造",
+        "- TODO [L1-001] 既存タスク",
+        "  - スコープ: 初期範囲",
+        "",
+        "## ユーザー指示履歴",
+        "- なし"
+      ].join("\n"),
+      "utf-8"
+    );
+
+    await runDecomposedLoop({
+      task: "元のタスクに、コスト比較も追加して",
+      managerAgent: {} as Agent,
+      callbacks: createCallbacks(),
+      taskPlanPath,
+      decomposeTaskFn: async () => [createWorkUnit({ goal: "追加の作業", scope: "Scope" })],
+      runPersistenceLoopFn: async () => [createIterationResult({ workProduct: "result" })],
+      synthesizeResultsFn: async () => "result"
+    });
+
+    const content = await readFile(taskPlanPath, "utf-8");
+    assert.match(content, /\*\*タスク\*\*: 元のタスク/);
+    assert.match(content, /- TODO \[L1-001\] 既存タスク/);
+    assert.match(content, /- \[.*\] 追加指示: 元のタスクに、コスト比較も追加して/);
+
+    await rm(tempRoot, { recursive: true, force: true });
   });
 
   it("multiple sequential query-manager interrupts during decompose do not stop the loop", async () => {

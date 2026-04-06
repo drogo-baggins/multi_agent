@@ -33,6 +33,8 @@ workspace.zip
 # Git worktrees
 .worktrees/
 
+/output/
+
 # Project-specific runtime data (investigation project artifacts)
 agents/worker/APPEND_SYSTEM.md
 agents/worker/changelog.md

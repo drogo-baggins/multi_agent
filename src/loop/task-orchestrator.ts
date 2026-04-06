@@ -227,6 +227,56 @@ async function readTaskPlan(planFilePath: string): Promise<{ entries: TaskPlanEn
   }
 }
 
+async function readTaskPlanRootTask(planFilePath: string): Promise<string | null> {
+  try {
+    const raw = await readFile(planFilePath, "utf-8");
+    const match = raw.match(/^\*\*タスク\*\*:\s*(.+)$/m);
+    return match?.[1]?.trim() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function appendTaskPlanDirective(planFilePath: string, directive: string): Promise<void> {
+  let content: string;
+  try {
+    content = await readFile(planFilePath, "utf-8");
+  } catch {
+    return;
+  }
+
+  const lines = content.split(/\r?\n/);
+  const sectionIndex = lines.findIndex((line) => line.trim() === "## ユーザー指示履歴");
+  const entryLine = `- [${new Date().toISOString()}] ${directive.trim()}`;
+
+  if (sectionIndex < 0) {
+    if (lines.length > 0 && lines[lines.length - 1] !== "") {
+      lines.push("");
+    }
+    lines.push("## ユーザー指示履歴", entryLine);
+  } else {
+    const sectionStart = sectionIndex + 1;
+    let insertAt = sectionStart;
+
+    while (insertAt < lines.length && !lines[insertAt]!.startsWith("## ")) {
+      if (lines[insertAt]?.trim() === "- なし") {
+        lines.splice(insertAt, 1);
+        continue;
+      }
+      insertAt += 1;
+    }
+
+    if (insertAt > sectionStart && lines[insertAt - 1]?.trim() !== "") {
+      lines.splice(insertAt, 0, "");
+      insertAt += 1;
+    }
+
+    lines.splice(insertAt, 0, entryLine);
+  }
+
+  await writeFile(planFilePath, lines.join("\n"), "utf-8");
+}
+
 async function writeTaskPlan(planFilePath: string, content: string): Promise<void> {
   await mkdir(join(planFilePath, ".."), { recursive: true });
   await writeFile(planFilePath, content, "utf-8");
@@ -453,10 +503,16 @@ export async function runDecomposedLoop(options: DecomposedLoopOptions): Promise
 
   if (taskPlanPath) {
     const existingTaskPlan = await readTaskPlan(taskPlanPath);
-    if (!isResume || !existingTaskPlan) {
+    if (!existingTaskPlan) {
       const planContent = buildTaskPlanContent(options.task, initialUnits, new Date().toISOString());
       await writeTaskPlan(taskPlanPath, planContent);
       options.notify?.("タスク計画を作成しました: task-plan.md");
+    } else if (!isResume) {
+      const existingRootTask = await readTaskPlanRootTask(taskPlanPath);
+      if (existingRootTask && existingRootTask.trim() !== options.task.trim()) {
+        await appendTaskPlanDirective(taskPlanPath, `追加指示: ${options.task}`);
+        options.notify?.("タスク計画に追加指示を追記しました");
+      }
     }
 
     if (isResume && savedState) {
