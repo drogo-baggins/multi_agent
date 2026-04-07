@@ -2,6 +2,9 @@ import { Readability } from "@mozilla/readability";
 import { parseHTML } from "linkedom";
 import TurndownService from "turndown";
 
+import { loadSearchConfig } from "./search-config.js";
+import { assertSafeOutboundUrl } from "./url-safety.js";
+
 const DEFAULT_TIMEOUT_MS = 30000;
 const DEFAULT_MAX_SIZE = 5 * 1024 * 1024;
 const turndown = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fenced" });
@@ -21,10 +24,12 @@ export async function extractContent(
 ): Promise<ExtractedContent> {
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxSize = options?.maxSize ?? DEFAULT_MAX_SIZE;
+  const config = loadSearchConfig();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, {
+    const safeUrl = assertSafeOutboundUrl(url, { allowedOrigins: config.urlAllowlist ?? [] });
+    const response = await fetch(safeUrl.toString(), {
       signal: controller.signal,
       headers: {
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",

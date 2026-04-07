@@ -1,5 +1,5 @@
 import { readFile, readdir, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@sinclair/typebox";
@@ -82,6 +82,28 @@ function summarizeChange(content: string): string {
   return `${normalized.slice(0, 117)}...`;
 }
 
+function resolveValidatedOutputFilePath(outputDir: string, filename: string): string {
+  if (filename.trim().length === 0) {
+    throw new Error("Invalid filename. Provide a single file name inside output/.");
+  }
+
+  if (isAbsolute(filename)) {
+    throw new Error("Invalid filename. Absolute paths are not allowed.");
+  }
+
+  if (filename !== basename(filename) || filename === "." || filename === "..") {
+    throw new Error("Invalid filename. Path separators and traversal segments are not allowed.");
+  }
+
+  const candidatePath = resolve(outputDir, filename);
+  const pathInsideOutput = relative(outputDir, candidatePath);
+  if (pathInsideOutput === ".." || pathInsideOutput.startsWith(`..${sep}`) || isAbsolute(pathInsideOutput)) {
+    throw new Error("Invalid filename. The resolved path must stay within output/.");
+  }
+
+  return candidatePath;
+}
+
 export function createReadWorkerConfigTool(workerConfigDir: string): AgentTool<typeof EmptyParametersSchema> {
   return {
     name: "read_worker_config",
@@ -123,7 +145,7 @@ export function createReadWorkProductTool(workerSandboxDir: string): AgentTool<t
     description: "Lists work product files or reads one file from output directory.",
     parameters: ReadWorkProductParametersSchema,
     async execute(_toolCallId: string, params: ReadWorkProductParameters) {
-      const outputDir = join(workerSandboxDir, "output");
+      const outputDir = resolve(workerSandboxDir, "output");
       if (!params.filename) {
         try {
           const entries = await readdir(outputDir, { withFileTypes: true });
@@ -144,7 +166,17 @@ export function createReadWorkProductTool(workerSandboxDir: string): AgentTool<t
         }
       }
 
-      const filePath = join(outputDir, params.filename);
+      let filePath: string;
+      try {
+        filePath = resolveValidatedOutputFilePath(outputDir, params.filename);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Invalid filename.";
+        return {
+          content: [{ type: "text", text: message }],
+          details: { mode: "error", filename: params.filename }
+        };
+      }
+
       const content = await readTextOrEmpty(filePath);
       const text = content || `File not found or empty: ${params.filename}`;
       return {
@@ -207,7 +239,17 @@ export function createEvaluateWorkProductTool(workerSandboxDir: string): AgentTo
     description: "Returns work product content with a structured evaluation framework.",
     parameters: EvaluateWorkProductParametersSchema,
     async execute(_toolCallId: string, params: EvaluateWorkProductParameters) {
-      const filePath = join(workerSandboxDir, "output", params.filename);
+      let filePath: string;
+      try {
+        filePath = resolveValidatedOutputFilePath(resolve(workerSandboxDir, "output"), params.filename);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Invalid filename.";
+        return {
+          content: [{ type: "text", text: message }],
+          details: { filename: params.filename, mode: "error" }
+        };
+      }
+
       const fileContent = await readTextOrEmpty(filePath);
       const text = [
         `# Work Product: ${params.filename}`,

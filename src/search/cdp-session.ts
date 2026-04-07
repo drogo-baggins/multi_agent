@@ -3,6 +3,8 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { CDP_PORT, ensureChromeReady } from "./browser-launcher.js";
+import { loadSearchConfig } from "./search-config.js";
+import { assertSafeOutboundUrl } from "./url-safety.js";
 
 export const CDP_ENDPOINT = `http://127.0.0.1:${CDP_PORT}`;
 const OVERLAY_TITLE = "pi-agent-overlay";
@@ -210,7 +212,9 @@ export async function navigateTo(
   waitUntil: "load" | "domcontentloaded" | "networkidle" = "domcontentloaded"
 ): Promise<Page> {
   const page = await getOrCreateDedicatedTab();
-  await page.goto(url, { waitUntil });
+  const config = loadSearchConfig();
+  const safeUrl = assertSafeOutboundUrl(url, { allowedOrigins: config.urlAllowlist ?? [] });
+  await page.goto(safeUrl.toString(), { waitUntil });
   await page.bringToFront().catch(() => {
     void 0;
   });

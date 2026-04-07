@@ -3,6 +3,7 @@ import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
 
 import { capturePageWithCdp } from "../search/cdp-capture.js";
+import { loadSearchConfig, assertSafeOutboundUrl } from "../search/index.js";
 import { extractContentFromHtml } from "../search/content-extractor.js";
 import type { HumanToolCdpCallbacks } from "./human-tool-status-ref.js";
 
@@ -38,6 +39,17 @@ export function createHumanFetchTool(
       signal?: AbortSignal,
       onUpdate?: Parameters<AgentTool<typeof HumanFetchParametersSchema>["execute"]>[3]
     ) {
+      const config = loadSearchConfig();
+      try {
+        assertSafeOutboundUrl(params.url, { allowedOrigins: config.urlAllowlist ?? [] });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{ type: "text", text: `Failed to fetch ${params.url}: ${message}` }],
+          details: { url: params.url, error: message }
+        };
+      }
+
       onUpdate?.({
         content: [{ type: "text", text: `[human mode] ブラウザの調査対象ウィンドウを確認し、オーバーレイのボタンを押してください: ${params.url}` }],
         details: undefined

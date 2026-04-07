@@ -1,5 +1,7 @@
 import { type Page } from "playwright-core";
 
+import { loadSearchConfig } from "./search-config.js";
+import { assertSafeOutboundUrl } from "./url-safety.js";
 import { getOrCreateOverlayTab, getOrCreateTargetTab, closeCaptureTabs, logHumanMode } from "./cdp-session.js";
 
 export interface CdpCaptureOptions {
@@ -35,22 +37,26 @@ export async function capturePageWithCdp(
   }
 ): Promise<CdpCaptureResult> {
   const waitUntil = options.waitUntil ?? "domcontentloaded";
+  const config = loadSearchConfig();
 
   if (options.signal?.aborted) {
     await logHumanMode("[capture] aborted before page acquisition");
     return { html: "", url: targetUrl, title: "", skipped: true, reason: "aborted" };
   }
 
+  const safeTargetUrl = assertSafeOutboundUrl(targetUrl, { allowedOrigins: config.urlAllowlist ?? [] });
+  const safeTargetUrlString = safeTargetUrl.toString();
+
   const overlayPage = await getOrCreateOverlayTab();
   const targetPage = await getOrCreateTargetTab();
 
-  await logHumanMode(`[capture] acquired overlay=${overlayPage.url()} target=${targetPage.url()} url=${targetUrl}`);
+  await logHumanMode(`[capture] acquired overlay=${overlayPage.url()} target=${targetPage.url()} url=${safeTargetUrlString}`);
 
-  const urlDisplay = targetUrl.length > 70 ? `${targetUrl.slice(0, 67)}...` : targetUrl;
+  const urlDisplay = safeTargetUrlString.length > 70 ? `${safeTargetUrlString.slice(0, 67)}...` : safeTargetUrlString;
   const injectOverlay = async (isInitial: boolean): Promise<void> => {
     await logHumanMode(`[capture] injecting overlay initial=${isInitial}`);
 
-    const escapedTargetUrl = targetUrl
+    const escapedTargetUrl = safeTargetUrlString
       .replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;")
       .replaceAll(">", "&gt;")
@@ -170,15 +176,15 @@ export async function capturePageWithCdp(
   } catch (error) {
     const message = error instanceof Error ? error.stack || error.message : String(error);
     await logHumanMode(`[capture] inject failed: ${message}`);
-    return { html: "", url: targetUrl, title: "", skipped: true, reason: "inject-failure" };
+    return { html: "", url: safeTargetUrlString, title: "", skipped: true, reason: "inject-failure" };
   }
 
   try {
     targetPage.on("framenavigated", framenavigatedHandler);
     navigationListenerAttached = true;
 
-    await logHumanMode(`[capture] navigating target to ${targetUrl}`);
-    await targetPage.goto(targetUrl, { waitUntil: "domcontentloaded" });
+    await logHumanMode(`[capture] navigating target to ${safeTargetUrlString}`);
+    await targetPage.goto(safeTargetUrlString, { waitUntil: "domcontentloaded" });
     await overlayPage.bringToFront().catch(() => {
       void 0;
     });
@@ -189,7 +195,7 @@ export async function capturePageWithCdp(
 
     if (options.signal?.aborted) {
       await logHumanMode("[capture] aborted after prompt");
-      return { html: "", url: targetUrl, title: "", skipped: true, reason: "aborted" };
+      return { html: "", url: safeTargetUrlString, title: "", skipped: true, reason: "aborted" };
     }
 
     const abortPromise = new Promise<"aborted">((resolve) => {
@@ -223,24 +229,24 @@ export async function capturePageWithCdp(
 
     if (overlayResult === "aborted") {
       await logHumanMode("[capture] aborted while waiting for overlay result");
-      return { html: "", url: targetUrl, title: "", skipped: true, reason: "aborted" };
+      return { html: "", url: safeTargetUrlString, title: "", skipped: true, reason: "aborted" };
     }
 
     const overlayUrl = overlayPage.url();
     const resolvedResult = new URL(overlayUrl).searchParams.get("result") || "";
     if (resolvedResult === "abort") {
       await logHumanMode("[capture] overlay aborted by result");
-      return { html: "", url: targetUrl, title: "", skipped: true, reason: "aborted" };
+      return { html: "", url: safeTargetUrlString, title: "", skipped: true, reason: "aborted" };
     }
 
     if (resolvedResult === "skip") {
       await logHumanMode("[capture] overlay skipped by user");
-      return { html: "", url: targetUrl, title: "", skipped: true, reason: "user-skip" };
+      return { html: "", url: safeTargetUrlString, title: "", skipped: true, reason: "user-skip" };
     }
 
     if (options.signal?.aborted) {
       await logHumanMode("[capture] aborted after overlay result");
-      return { html: "", url: targetUrl, title: "", skipped: true, reason: "aborted" };
+      return { html: "", url: safeTargetUrlString, title: "", skipped: true, reason: "aborted" };
     }
 
     await overlayPage.goto("about:blank", { waitUntil: "domcontentloaded" }).catch(() => {
@@ -253,7 +259,7 @@ export async function capturePageWithCdp(
 
     if (options.signal?.aborted) {
       await logHumanMode("[capture] aborted before DOM extraction");
-      return { html: "", url: targetUrl, title: "", skipped: true, reason: "aborted" };
+      return { html: "", url: safeTargetUrlString, title: "", skipped: true, reason: "aborted" };
     }
 
     const finalUrl = targetPage.url();

@@ -30,6 +30,7 @@ interface SearchConfig {
   maxResults: number;           // 返す結果の最大数
   userAgent: string;            // HTTP User-Agent ヘッダー
   fallbackProviders: FallbackProvider[]; // SearXNG失敗時の試行順プロバイダー
+  urlAllowlist?: string[];      // 明示的に許可する outbound URL の origin 一覧
   tavilyApiKey?: string;        // Tavily API キー
   braveApiKey?: string;         // Brave Search API キー
   serperApiKey?: string;        // Serper API キー
@@ -46,6 +47,7 @@ interface SearchConfig {
 | `SEARXNG_TIMEOUT_MS` | `30000` | リクエストタイムアウト (ms) |
 | `SEARXNG_MAX_RESULTS` | `10` | 最大結果数 |
 | `SEARCH_FALLBACK_PROVIDERS` | `""` (なし) | フォールバックプロバイダー（カンマ区切り）例: `"tavily,brave"` |
+| `SEARCH_URL_ALLOWLIST` | `""` (なし) | 明示的に許可する outbound URL の origin（カンマ区切り）例: `"http://localhost:8888,https://example.com"` |
 | `TAVILY_API_KEY` | — | Tavily API キー |
 | `BRAVE_API_KEY` | — | Brave Search API キー |
 | `SERPER_API_KEY` | — | Serper API キー |

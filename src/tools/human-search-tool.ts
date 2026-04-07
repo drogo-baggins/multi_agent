@@ -3,6 +3,7 @@ import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
 
 import { capturePageWithCdp } from "../search/cdp-capture.js";
+import { loadSearchConfig, assertSafeOutboundUrl } from "../search/index.js";
 import { extractContentFromHtml } from "../search/content-extractor.js";
 import type { HumanToolCdpCallbacks } from "./human-tool-status-ref.js";
 
@@ -40,6 +41,16 @@ export function createHumanSearchTool(
       onUpdate?: Parameters<AgentTool<typeof HumanSearchParametersSchema>["execute"]>[3]
     ) {
       const searchUrl = buildSearchUrl(params.query);
+      const config = loadSearchConfig();
+      try {
+        assertSafeOutboundUrl(searchUrl, { allowedOrigins: config.urlAllowlist ?? [] });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{ type: "text", text: `Search failed for "${params.query}": ${message}` }],
+          details: { query: params.query, error: message }
+        };
+      }
 
       onUpdate?.({
         content: [{ type: "text", text: `[human mode] ブラウザの調査対象ウィンドウを確認し、オーバーレイのボタンを押してください: ${searchUrl}` }],

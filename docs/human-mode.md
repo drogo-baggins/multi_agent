@@ -264,6 +264,7 @@ npm run list-archives
 |---|---|---|
 | `SEARCH_MODE` | `human` | 自動検索モードを使いたいときだけ `auto` にします |
 | `HUMAN_SEARCH_ENGINE` | `https://www.google.com/search?q=` | Google 以外の検索エンジンを使いたいときに変更します。例: `https://duckduckgo.com/?q=` |
+| `SEARCH_URL_ALLOWLIST` | （なし） | web_fetch / human mode で明示的に許可する URL の origin。ローカル検索エンジンを使うときに追加します。 |
 | `CHROME_WINDOW_POSITION` | （なし） | Chrome を特定のモニターに置きたいときに使います。例: `0,0` |
 | `CHROME_WINDOW_SIZE` | （なし） | Chrome の大きさを固定したいときに使います。例: `1280,900` |
 

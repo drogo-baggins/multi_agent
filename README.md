@@ -205,11 +205,14 @@ SearXNG を使う場合や検索APIのフォールバックを設定したい場
 ```bash
 SEARCH_MODE=auto
 SEARXNG_URL=http://localhost:8888
+SEARCH_URL_ALLOWLIST=http://localhost:8888
 SEARCH_FALLBACK_PROVIDERS=tavily,brave,serper
 TAVILY_API_KEY=tvly-...
 BRAVE_API_KEY=...
 SERPER_API_KEY=...
 ```
+
+`SEARCH_URL_ALLOWLIST` は、web_fetch や human mode のページ取得で明示的に許可する URL の origin をカンマ区切りで指定します。ローカルの SearXNG や独自の取得先を使う場合は追加してください。
 
 ## プロジェクトのアーカイブとリセット
 

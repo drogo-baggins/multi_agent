@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
 
-import { extractContent, loadSearchConfig, searchWeb } from "./index.js";
+import { assertSafeOutboundUrl, extractContent, loadSearchConfig, searchWeb } from "./index.js";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -21,12 +21,14 @@ describe("loadSearchConfig", () => {
     saved = {
       SEARXNG_URL: process.env.SEARXNG_URL,
       SEARXNG_TIMEOUT_MS: process.env.SEARXNG_TIMEOUT_MS,
-      SEARXNG_MAX_RESULTS: process.env.SEARXNG_MAX_RESULTS
+      SEARXNG_MAX_RESULTS: process.env.SEARXNG_MAX_RESULTS,
+      SEARCH_URL_ALLOWLIST: process.env.SEARCH_URL_ALLOWLIST
     };
 
     delete process.env.SEARXNG_URL;
     delete process.env.SEARXNG_TIMEOUT_MS;
     delete process.env.SEARXNG_MAX_RESULTS;
+    delete process.env.SEARCH_URL_ALLOWLIST;
   });
 
   afterEach(() => {
@@ -80,6 +82,14 @@ describe("loadSearchConfig", () => {
 
     assert.equal(config.timeoutMs, 30000);
     assert.equal(config.maxResults, 10);
+  });
+
+  it("parses SEARCH_URL_ALLOWLIST into normalized origins", () => {
+    process.env.SEARCH_URL_ALLOWLIST = "http://localhost:8888, https://example.com/path, invalid-entry";
+
+    const config = loadSearchConfig();
+
+    assert.deepEqual(config.urlAllowlist, ["http://localhost:8888", "https://example.com"]);
   });
 });
 
@@ -224,6 +234,41 @@ describe("extractContent", () => {
     mock.restoreAll();
   });
 
+  it("blocks localhost URLs before any fetch request", async () => {
+    let fetchCalled = false;
+    mock.method(globalThis, "fetch", async () => {
+      fetchCalled = true;
+      return htmlResponse("should not be used");
+    });
+
+    const result = await extractContent("http://localhost:3000/private");
+
+    assert.equal(fetchCalled, false);
+    assert.match(result.error ?? "", /Blocked URL host: localhost/);
+    assert.equal(result.content, "");
+  });
+
+  it("allows an explicitly allowlisted localhost origin", async () => {
+    const original = process.env.SEARCH_URL_ALLOWLIST;
+    process.env.SEARCH_URL_ALLOWLIST = "http://localhost:3000";
+
+    mock.method(globalThis, "fetch", async () =>
+      htmlResponse("<html><head><title>Local</title></head><body><article><p>Allowed</p></article></body></html>")
+    );
+
+    const result = await extractContent("http://localhost:3000/private");
+
+    if (original === undefined) {
+      delete process.env.SEARCH_URL_ALLOWLIST;
+    } else {
+      process.env.SEARCH_URL_ALLOWLIST = original;
+    }
+
+    assert.equal(result.error, undefined);
+    assert.equal(result.title, "Local");
+    assert.match(result.content, /Allowed/);
+  });
+
   it("extracts content and converts to markdown", async () => {
     mock.method(globalThis, "fetch", async () =>
       htmlResponse(
@@ -287,6 +332,22 @@ describe("extractContent", () => {
 
     assert.equal(result.error, "request timed out");
     assert.equal(result.content, "");
+  });
+});
+
+describe("assertSafeOutboundUrl", () => {
+  it("blocks private IP literals", () => {
+    assert.throws(() => assertSafeOutboundUrl("http://127.0.0.1:8080/"), /Blocked URL host/);
+    assert.throws(() => assertSafeOutboundUrl("http://169.254.169.254/"), /Blocked URL host/);
+  });
+
+  it("blocks non-http schemes", () => {
+    assert.throws(() => assertSafeOutboundUrl("file:///etc/passwd"), /Only http and https are allowed/);
+  });
+
+  it("honors explicit allowlist origins", () => {
+    const url = assertSafeOutboundUrl("http://localhost:3000/path", { allowedOrigins: ["http://localhost:3000"] });
+    assert.equal(url.origin, "http://localhost:3000");
   });
 });
 

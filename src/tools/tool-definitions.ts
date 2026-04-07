@@ -4,9 +4,6 @@ import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
 
 import type { AgentRegistry } from "../communication/agent-registry.js";
-import { searchWeb } from "../search/index.js";
-import { extractContent } from "../search/index.js";
-import { urlCache } from "./url-cache.js";
 import type { HumanToolRuntimeController } from "./human-tool-status-ref.js";
 import {
   createLoopCallbacks,
@@ -21,22 +18,11 @@ const AskUserParametersSchema = Type.Object({
   question: Type.String()
 });
 
-const WebSearchParametersSchema = Type.Object({
-  query: Type.String(),
-  maxResults: Type.Optional(Type.Number())
-});
-
-const WebFetchParametersSchema = Type.Object({
-  url: Type.String()
-});
-
 const StartResearchLoopParametersSchema = Type.Object({
   task: Type.String(),
   maxIterations: Type.Optional(Type.Number()),
   qualityThreshold: Type.Optional(Type.Number())
 });
-
-const MAX_CONTENT_CHARS = 30000;
 
 function createAskUserToolDefinition(): ToolDefinition<typeof AskUserParametersSchema> {
   return {
@@ -63,112 +49,6 @@ function createAskUserToolDefinition(): ToolDefinition<typeof AskUserParametersS
         content: [{ type: "text", text: "[No interactive UI available]" }],
         details: undefined
       };
-    }
-  };
-}
-
-function createWebSearchToolDefinition(): ToolDefinition<typeof WebSearchParametersSchema> {
-  return {
-    name: "web_search",
-    label: "Web Search",
-    description: "Searches the web for relevant information.",
-    parameters: WebSearchParametersSchema,
-    async execute(
-      _toolCallId: string,
-      params: Static<typeof WebSearchParametersSchema>,
-      _signal: AbortSignal | undefined,
-      _onUpdate: AgentToolUpdateCallback | undefined,
-      _ctx: ExtensionContext
-    ): Promise<AgentToolResult<unknown>> {
-      try {
-        const response = await searchWeb(params.query, { limit: params.maxResults });
-        const results = response.results;
-
-        if (results.length === 0) {
-          return {
-            content: [{ type: "text", text: `No results found for "${params.query}".` }],
-            details: { query: params.query, resultCount: 0, results }
-          };
-        }
-
-        const formattedMarkdown = results
-          .map(
-            (result, index) =>
-              `${index + 1}. **${result.title}**\n   ${result.url}\n   ${result.snippet}`
-          )
-          .join("\n\n");
-
-        return {
-          content: [{ type: "text", text: formattedMarkdown }],
-          details: { query: params.query, resultCount: results.length, results }
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return {
-          content: [{ type: "text", text: `Search failed: ${message}` }],
-          details: { query: params.query, error: message }
-        };
-      }
-    }
-  };
-}
-
-function createWebFetchToolDefinition(): ToolDefinition<typeof WebFetchParametersSchema> {
-  return {
-    name: "web_fetch",
-    label: "Web Fetch",
-    description: "Fetches a web page and extracts its content as readable markdown.",
-    parameters: WebFetchParametersSchema,
-    async execute(
-      _toolCallId: string,
-      params: Static<typeof WebFetchParametersSchema>,
-      _signal: AbortSignal | undefined,
-      _onUpdate: AgentToolUpdateCallback | undefined,
-      _ctx: ExtensionContext
-    ): Promise<AgentToolResult<unknown>> {
-      const cached = urlCache.get(params.url);
-      if (cached) {
-        return {
-          content: [{ type: "text", text: `[このURLは既にアクセス済みです — キャッシュを返します]\n\n${cached.formattedContent}` }],
-          details: { url: params.url, title: cached.title, cached: true }
-        };
-      }
-
-      try {
-        const extracted = await extractContent(params.url);
-
-        if (extracted.error) {
-          return {
-            content: [{ type: "text", text: `Failed to fetch ${params.url}: ${extracted.error}` }],
-            details: { url: params.url, error: extracted.error }
-          };
-        }
-
-        const truncated = extracted.content.length > MAX_CONTENT_CHARS;
-        const body = truncated
-          ? `${extracted.content.slice(0, MAX_CONTENT_CHARS)}\n\n[Content truncated...]`
-          : extracted.content;
-        const title = extracted.title || "Untitled";
-        const formattedContent = `# ${title}\nSource: ${params.url}\n\n${body}`;
-
-        urlCache.set(params.url, { formattedContent, title });
-
-        return {
-          content: [{ type: "text", text: formattedContent }],
-          details: {
-            url: params.url,
-            title,
-            truncated,
-            contentLength: extracted.content.length
-          }
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return {
-          content: [{ type: "text", text: `Failed to fetch ${params.url}: ${message}` }],
-          details: { url: params.url, error: message }
-        };
-      }
     }
   };
 }

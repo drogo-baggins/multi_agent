@@ -10,9 +10,24 @@ export interface SearchConfig {
   chromeWindowPosition?: string;
   chromeWindowSize?: string;
   fallbackProviders: FallbackProvider[];
+  urlAllowlist?: string[];
   tavilyApiKey?: string;
   braveApiKey?: string;
   serperApiKey?: string;
+}
+
+function parseUrlAllowlist(raw: string | undefined): string[] {
+  return (raw ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .flatMap((entry) => {
+      try {
+        return [new URL(entry).origin];
+      } catch {
+        return [];
+      }
+    });
 }
 
 /** Loads search config from environment variables. */
@@ -33,6 +48,7 @@ export function loadSearchConfig(): SearchConfig {
     chromeWindowPosition: process.env.CHROME_WINDOW_POSITION || undefined,
     chromeWindowSize: process.env.CHROME_WINDOW_SIZE || undefined,
     fallbackProviders,
+    urlAllowlist: parseUrlAllowlist(process.env.SEARCH_URL_ALLOWLIST),
     tavilyApiKey: process.env.TAVILY_API_KEY,
     braveApiKey: process.env.BRAVE_API_KEY,
     serperApiKey: process.env.SERPER_API_KEY
